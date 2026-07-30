@@ -1,0 +1,47 @@
+name: GitExplorer
+options:
+  bundleIdPrefix: net.fuzzyhead
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: VD7DMST4GD
+    SWIFT_VERSION: "5.10"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  GitExplorer:
+    type: application
+    platform: macOS
+    sources:
+      - path: GitExplorer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.fuzzyhead.git
+        PRODUCT_MODULE_NAME: GitExplorer
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: GitExplorer/Info.plist
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: GitExplorer/GitExplorer.entitlements
+    entitlements:
+      path: GitExplorer/GitExplorer.entitlements
+  GitExplorerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: GitExplorerTests
+    dependencies:
+      - target: GitExplorer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.fuzzyhead.git.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  GitExplorer:
+    build:
+      targets:
+        GitExplorer: all
+        GitExplorerTests: [test]
+    test:
+      targets:
+        - GitExplorerTests
