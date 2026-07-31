@@ -35,17 +35,19 @@ struct RepositorySidebar: View {
     }
 
     private var controls: some View {
-        VStack(spacing: 8) {
+        HStack(spacing: 8) {
             Picker("Organization", selection: $model.selectedOrganization) {
                 Text("All organizations").tag("All")
                 ForEach(model.organizations, id: \.self) { Text($0).tag($0) }
             }
             .labelsHidden()
+
             Picker("Repository scope", selection: $model.repositoryFilter) {
                 ForEach(RepositoryFilter.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .frame(maxWidth: .infinity)
         }
         .padding(10)
     }
@@ -67,7 +69,7 @@ private struct RepositoryRow: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text(repository.name).fontWeight(.medium)
+                    Text(repository.name)
                     if repository.isPrivate {
                         Image(systemName: "lock.fill")
                             .font(.caption2)

@@ -120,7 +120,7 @@ private struct LocalRepositoryView: View {
                 case .files: FileBrowserView(repository: repository)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .task(id: repository.localURL) {
             statusState = .loading

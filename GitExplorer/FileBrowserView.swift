@@ -20,206 +20,271 @@ private struct FileExplorerWorkspace: View {
     @EnvironmentObject private var model: AppModel
 
     let root: URL
-    @State private var directory: URL
-    @State private var folders: [URL] = []
-    @State private var files: [URL] = []
-    @State private var selectedFile: URL?
-    @State private var isLoading = true
-    @State private var loadError: String?
+    @State private var selection: URL
+    @State private var expandedDirectories: Set<URL> = []
+    @State private var entriesByDirectory: [URL: [URL]] = [:]
+    @State private var loadingDirectories: Set<URL> = []
+    @State private var directoryErrors: [URL: String] = [:]
 
     init(root: URL) {
         self.root = root
-        _directory = State(initialValue: root)
+        _selection = State(initialValue: root)
+        _expandedDirectories = State(initialValue: Set([root]))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            BreadcrumbBar(
-                crumbs: ExplorerPath.crumbs(from: root, to: directory),
-                selectedDirectory: directory,
-                onSelect: navigate
+        HSplitView {
+            ExplorerTreePane(
+                root: root,
+                selection: $selection,
+                expandedDirectories: $expandedDirectories,
+                entriesByDirectory: entriesByDirectory,
+                loadingDirectories: loadingDirectories,
+                directoryErrors: directoryErrors,
+                onLoadDirectory: requestLoad
             )
-            Divider()
-            HSplitView {
-                FolderPane(
-                    directory: directory,
-                    folders: folders,
-                    isLoading: isLoading,
-                    onOpen: navigate
-                )
-                .frame(minWidth: 180, idealWidth: 230, maxWidth: 320)
+            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
 
-                FilePane(
-                    files: files,
-                    selection: $selectedFile,
-                    isLoading: isLoading
-                )
-                .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
-
-                preview
-                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
-            }
+            preview
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: directory) {
-            await load(directory)
+        .task {
+            await loadDirectoryIfNeeded(root)
+        }
+        .task(id: selection) {
+            guard selection.isDirectory else { return }
+            await loadDirectoryIfNeeded(selection)
         }
     }
 
     @ViewBuilder
     private var preview: some View {
-        if let selectedFile {
-            FilePreview(url: selectedFile, root: root)
-                .id(selectedFile)
-        } else if let loadError {
-            ContentUnavailableView(
-                "Couldn’t open folder",
-                systemImage: "exclamationmark.triangle",
-                description: Text(loadError)
+        if selection.isDirectory {
+            FolderPreview(
+                directory: selection,
+                root: root,
+                entries: entriesByDirectory[selection],
+                isLoading: loadingDirectories.contains(selection),
+                error: directoryErrors[selection],
+                onSelect: select
             )
+            .id(selection)
         } else {
-            ContentUnavailableView(
-                "Select a file",
-                systemImage: "doc.text.magnifyingglass",
-                description: Text("Choose a file to preview its contents.")
-            )
+            FilePreview(url: selection, root: root)
+                .id(selection)
         }
     }
 
-    private func navigate(to destination: URL) {
-        guard ExplorerPath.contains(destination, in: root) else { return }
-        directory = destination.standardizedFileURL
-        selectedFile = nil
+    private func select(_ item: URL) {
+        guard ExplorerPath.contains(item, in: root) else { return }
+        selection = item.standardizedFileURL
     }
 
     @MainActor
-    private func load(_ requestedDirectory: URL) async {
-        isLoading = true
-        loadError = nil
+    private func requestLoad(_ directory: URL) {
+        Task { await loadDirectoryIfNeeded(directory) }
+    }
+
+    @MainActor
+    private func loadDirectoryIfNeeded(_ directory: URL) async {
+        let directory = directory.standardizedFileURL
+        guard ExplorerPath.contains(directory, in: root),
+              entriesByDirectory[directory] == nil,
+              !loadingDirectories.contains(directory) else { return }
+
+        loadingDirectories.insert(directory)
+        directoryErrors[directory] = nil
         do {
-            let entries = try await model.git.listFiles(at: requestedDirectory)
-            guard directory == requestedDirectory else { return }
-            folders = entries.filter(\.isDirectory)
-            files = entries.filter { !$0.isDirectory }
-            if let selectedFile, !files.contains(selectedFile) {
-                self.selectedFile = nil
-            }
+            entriesByDirectory[directory] = try await model.git.listFiles(at: directory)
         } catch {
-            guard directory == requestedDirectory else { return }
-            folders = []
-            files = []
-            selectedFile = nil
-            loadError = error.localizedDescription
+            directoryErrors[directory] = error.localizedDescription
             model.errorMessage = error.localizedDescription
         }
-        isLoading = false
+        loadingDirectories.remove(directory)
     }
 }
 
-private struct BreadcrumbBar: View {
-    let crumbs: [URL]
-    let selectedDirectory: URL
+private struct ExplorerTreePane: View {
+    let root: URL
+    @Binding var selection: URL
+    @Binding var expandedDirectories: Set<URL>
+    let entriesByDirectory: [URL: [URL]]
+    let loadingDirectories: Set<URL>
+    let directoryErrors: [URL: String]
+    let onLoadDirectory: (URL) -> Void
+
+    var body: some View {
+        List {
+            ExplorerTreeNode(
+                url: root,
+                selection: $selection,
+                expandedDirectories: $expandedDirectories,
+                entriesByDirectory: entriesByDirectory,
+                loadingDirectories: loadingDirectories,
+                directoryErrors: directoryErrors,
+                onLoadDirectory: onLoadDirectory,
+                isRepositoryRoot: true
+            )
+        }
+        .listStyle(.sidebar)
+        .accessibilityLabel("Files and folders in \(root.lastPathComponent)")
+    }
+}
+
+private struct ExplorerTreeNode: View {
+    let url: URL
+    @Binding var selection: URL
+    @Binding var expandedDirectories: Set<URL>
+    let entriesByDirectory: [URL: [URL]]
+    let loadingDirectories: Set<URL>
+    let directoryErrors: [URL: String]
+    let onLoadDirectory: (URL) -> Void
+    var isRepositoryRoot = false
+
+    @ViewBuilder
+    var body: some View {
+        if url.isDirectory {
+            DisclosureGroup(isExpanded: expansionBinding) {
+                if loadingDirectories.contains(url) && entriesByDirectory[url] == nil {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.leading, 24)
+                } else if directoryErrors[url] != nil {
+                    Label("Unable to load folder", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entriesByDirectory[url] ?? [], id: \.self) { child in
+                        ExplorerTreeNode(
+                            url: child,
+                            selection: $selection,
+                            expandedDirectories: $expandedDirectories,
+                            entriesByDirectory: entriesByDirectory,
+                            loadingDirectories: loadingDirectories,
+                            directoryErrors: directoryErrors,
+                            onLoadDirectory: onLoadDirectory
+                        )
+                    }
+                }
+            } label: {
+                selectableLabel
+            }
+        } else {
+            selectableLabel
+        }
+    }
+
+    private var selectableLabel: some View {
+        Button {
+            selection = url
+        } label: {
+            HStack(spacing: 8) {
+                if isRepositoryRoot {
+                    Image(systemName: "shippingbox.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 18)
+                } else {
+                    FileItemIcon(url: url)
+                }
+                Text(url.lastPathComponent)
+                    .fontWeight(isRepositoryRoot ? .semibold : .regular)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 5)
+            .padding(.vertical, 4)
+            .background {
+                if selection == url {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color.accentColor.opacity(0.16))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(isRepositoryRoot ? "Show repository contents" : url.isDirectory ? "Show folder contents" : "Preview file")
+    }
+
+    private var expansionBinding: Binding<Bool> {
+        Binding {
+            expandedDirectories.contains(url)
+        } set: { isExpanded in
+            if isExpanded {
+                expandedDirectories.insert(url)
+                onLoadDirectory(url)
+            } else {
+                expandedDirectories.remove(url)
+            }
+        }
+    }
+}
+
+private struct FolderPreview: View {
+    let directory: URL
+    let root: URL
+    let entries: [URL]?
+    let isLoading: Bool
+    let error: String?
     let onSelect: (URL) -> Void
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 4) {
-                ForEach(Array(crumbs.enumerated()), id: \.element) { index, crumb in
-                    if index > 0 {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Button {
-                        onSelect(crumb)
-                    } label: {
-                        Label {
-                            Text(crumb.lastPathComponent)
-                                .lineLimit(1)
-                        } icon: {
-                            Image(systemName: index == 0 ? "shippingbox.fill" : "folder.fill")
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(crumb == selectedDirectory ? .primary : .secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 5)
-                    .background {
-                        if crumb == selectedDirectory {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentColor.opacity(0.12))
-                        }
-                    }
-                    .help("Open \(crumb.path)")
+        VStack(spacing: 0) {
+            HStack(spacing: 9) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(directory.lastPathComponent)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(ExplorerPath.relativePath(of: directory, from: root))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                if let entries {
+                    Text(entries.count == 1 ? "1 item" : "\(entries.count) items")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-        .scrollIndicators(.hidden)
-        .background(.bar)
-    }
-}
-
-private struct FolderPane: View {
-    let directory: URL
-    let folders: [URL]
-    let isLoading: Bool
-    let onOpen: (URL) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PaneHeader(title: "Folders", count: folders.count)
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .background(.bar)
             Divider()
-            if isLoading {
-                ProgressView()
+
+            if isLoading && entries == nil {
+                ProgressView("Loading folder…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if folders.isEmpty {
-                ContentUnavailableView("No folders", systemImage: "folder")
+            } else if let error {
+                ContentUnavailableView(
+                    "Couldn’t open folder",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error)
+                )
+            } else if entries?.isEmpty == true {
+                ContentUnavailableView("Empty folder", systemImage: "folder")
             } else {
-                List(folders, id: \.self) { folder in
+                List(entries ?? [], id: \.self) { entry in
                     Button {
-                        onOpen(folder)
+                        onSelect(entry)
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder.fill")
-                                .foregroundStyle(.blue)
-                            Text(folder.lastPathComponent)
+                        HStack(spacing: 10) {
+                            FileItemIcon(url: entry)
+                            Text(entry.lastPathComponent)
                                 .lineLimit(1)
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
+                            Spacer()
+                            if entry.isDirectory {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Open \(folder.lastPathComponent)")
-                }
-                .listStyle(.sidebar)
-            }
-        }
-        .accessibilityLabel("Folders in \(directory.lastPathComponent)")
-    }
-}
-
-private struct FilePane: View {
-    let files: [URL]
-    @Binding var selection: URL?
-    let isLoading: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PaneHeader(title: "Files", count: files.count)
-            Divider()
-            if isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if files.isEmpty {
-                ContentUnavailableView("No files", systemImage: "doc")
-            } else {
-                List(files, id: \.self, selection: $selection) { file in
-                    FileRow(url: file)
-                        .tag(file)
+                    .help(entry.isDirectory ? "Show folder contents" : "Preview file")
                 }
                 .listStyle(.inset)
             }
@@ -227,46 +292,17 @@ private struct FilePane: View {
     }
 }
 
-private struct PaneHeader: View {
-    let title: String
-    let count: Int
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.headline)
-            Spacer()
-            Text(count, format: .number)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-    }
-}
-
-private struct FileRow: View {
+private struct FileItemIcon: View {
     let url: URL
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .foregroundStyle(iconColor)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(url.lastPathComponent)
-                    .lineLimit(1)
-                if !url.pathExtension.isEmpty {
-                    Text(url.pathExtension.uppercased())
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.vertical, 2)
+        Image(systemName: icon)
+            .foregroundStyle(color)
+            .frame(width: 18)
     }
 
     private var icon: String {
+        if url.isDirectory { return "folder.fill" }
         if MarkdownDocument.isMarkdownFile(url) { return "doc.richtext" }
         if SourceLanguage(url: url) != nil { return "chevron.left.forwardslash.chevron.right" }
         switch url.pathExtension.lowercased() {
@@ -276,8 +312,9 @@ private struct FileRow: View {
         }
     }
 
-    private var iconColor: Color {
-        SourceLanguage(url: url) == .swift ? .orange : .accentColor
+    private var color: Color {
+        if url.isDirectory { return .blue }
+        return SourceLanguage(url: url) == .swift ? .orange : .accentColor
     }
 }
 
@@ -345,20 +382,26 @@ private struct FilePreview: View {
         if MarkdownDocument.isMarkdownFile(url) {
             MarkdownPreviewView(markdown: contents, baseURL: url.deletingLastPathComponent())
         } else {
-            ScrollView([.vertical, .horizontal]) {
-                Group {
-                    if let language = SourceLanguage(url: url) {
-                        Text(SourceSyntaxHighlighter.highlight(contents, as: language))
-                    } else {
-                        Text(contents)
+            GeometryReader { geometry in
+                ScrollView([.vertical, .horizontal]) {
+                    Group {
+                        if let language = SourceLanguage(url: url) {
+                            Text(SourceSyntaxHighlighter.highlight(contents, as: language))
+                        } else {
+                            Text(contents)
+                        }
                     }
+                    .font(.system(.callout, design: .monospaced))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(16)
+                    .frame(
+                        minWidth: geometry.size.width,
+                        minHeight: geometry.size.height,
+                        alignment: .topLeading
+                    )
                 }
-                .font(.system(.callout, design: .monospaced))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
             }
         }
     }
