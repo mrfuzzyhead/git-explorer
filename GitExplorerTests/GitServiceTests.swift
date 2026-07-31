@@ -72,6 +72,14 @@ final class GitServiceTests: XCTestCase {
         XCTAssertTrue(head.branches.contains("main"))
         XCTAssertTrue(commits.contains { $0.tags.contains("v1.0.0") })
 
+        let firstPage = try await service.commitPage(at: repository, offset: 0, limit: 2)
+        XCTAssertEqual(firstPage.commits.count, 2)
+        XCTAssertTrue(firstPage.hasMore)
+        let secondPage = try await service.commitPage(at: repository, offset: 2, limit: 2)
+        XCTAssertEqual(secondPage.commits.count, 2)
+        XCTAssertFalse(secondPage.hasMore)
+        XCTAssertTrue(Set(firstPage.commits.map(\.id)).isDisjoint(with: secondPage.commits.map(\.id)))
+
         let feature = try XCTUnwrap(commits.first { $0.message == "Feature commit" })
         XCTAssertTrue(feature.children.contains(head.id))
         let details = try await service.details(for: feature, at: repository)
@@ -81,8 +89,12 @@ final class GitServiceTests: XCTestCase {
         try write("dirty\n", to: repository.appendingPathComponent("uncommitted.txt"))
         let status = try await service.status(at: repository)
         XCTAssertEqual(status.branch, "main")
+        XCTAssertEqual(status.upstream, "origin/main")
         XCTAssertEqual(status.ahead, 2)
         XCTAssertEqual(status.behind, 0)
+        XCTAssertEqual(status.divergence(for: "main"), BranchDivergence(ahead: 2, behind: 0))
+        XCTAssertEqual(status.divergence(for: "origin/main"), BranchDivergence(ahead: 0, behind: 2))
+        XCTAssertNil(status.divergence(for: "feature"))
         XCTAssertTrue(status.hasChanges)
     }
 

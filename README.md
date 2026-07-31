@@ -56,7 +56,7 @@ The app is written in SwiftUI and targets the current development Mac:
   patch output.
 - Offers branch checkout, comparison, rename, and safe deletion. Git's normal
   merged-branch protection remains in effect.
-- Uses lazy row rendering and accepts up to 20,000 commits per loaded graph.
+- Uses lazy row rendering and loads history incrementally in 500-commit pages.
 
 ## Requirements
 
@@ -229,8 +229,8 @@ project.yml
 - Local discovery searches three nested directory levels and skips common heavy
   folders such as `node_modules`, `Pods`, `vendor`, `DerivedData`, `build`, and
   `dist`.
-- Graph loading is capped at 20,000 commits to keep initial repository loading
-  bounded.
+- Graph loading starts with the newest 500 commits and loads older history as
+  the user reaches the end of the graph.
 - Repository cloning uses the repository name under the selected root. If that
   destination already exists, Git reports the conflict and no files are
   overwritten.

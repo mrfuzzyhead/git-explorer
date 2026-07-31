@@ -35,6 +35,34 @@ final class GitGraphLayoutTests: XCTestCase {
         )
     }
 
+    func testBranchFilterIncludesTipAndItsReachableHistory() {
+        let commits = [
+            commit("main-tip", parents: ["main-parent"], branches: ["main"]),
+            commit("feature-tip", parents: ["shared"], branches: ["feature"]),
+            commit("main-parent", parents: ["shared"]),
+            commit("shared", parents: [])
+        ]
+
+        XCTAssertEqual(
+            CommitGraphFilter.commitIDs(reachableFrom: "main", in: commits),
+            ["main-tip", "main-parent", "shared"]
+        )
+    }
+
+    func testBranchFilterIncludesBothParentsOfMergeCommit() {
+        let commits = [
+            commit("merge", parents: ["main", "feature"], branches: ["release"]),
+            commit("main", parents: ["base"]),
+            commit("feature", parents: ["base"]),
+            commit("base", parents: [])
+        ]
+
+        XCTAssertEqual(
+            CommitGraphFilter.commitIDs(reachableFrom: "release", in: commits),
+            ["merge", "main", "feature", "base"]
+        )
+    }
+
     func testLinearHistoryKeepsOneLane() {
         let commits = [
             commit("c", parents: ["b"]),
@@ -62,6 +90,34 @@ final class GitGraphLayoutTests: XCTestCase {
         XCTAssertEqual(first[2].lane, 0)
     }
 
+    func testBranchJoiningExistingLaneKeepsItsOwnColor() {
+        let commits = [
+            commit("main", parents: ["base"]),
+            commit("branch", parents: ["base"]),
+            commit("base", parents: [])
+        ]
+
+        let result = GitGraphLayout.make(commits: commits)
+
+        XCTAssertEqual(result[1].lane, 1)
+        XCTAssertEqual(
+            result[1].connections,
+            [CommitConnection(fromLane: 1, toLane: 0, colorLane: 1)]
+        )
+    }
+
+    func testUnconnectedBranchTipDoesNotDrawLinePastItsDot() {
+        let commits = [
+            commit("tip", parents: ["root"]),
+            commit("root", parents: [])
+        ]
+
+        let result = GitGraphLayout.make(commits: commits)
+
+        XCTAssertFalse(result[0].hasIncomingConnection)
+        XCTAssertTrue(result[1].hasIncomingConnection)
+    }
+
     func testHeadAndMetadataArePreserved() {
         let source = commit("head", parents: [], isHead: true)
         let layout = GitGraphLayout.make(commits: [source])
@@ -82,14 +138,19 @@ final class GitGraphLayoutTests: XCTestCase {
         XCTAssertTrue(layout.allSatisfy { $0.lane == 0 && $0.laneCount == 1 })
     }
 
-    private func commit(_ id: String, parents: [String], isHead: Bool = false) -> GitCommit {
+    private func commit(
+        _ id: String,
+        parents: [String],
+        branches: [String] = [],
+        isHead: Bool = false
+    ) -> GitCommit {
         GitCommit(
             id: id,
             parents: parents,
             author: "Test",
             timestamp: Date(timeIntervalSince1970: 0),
             message: id,
-            branches: [],
+            branches: branches,
             tags: [],
             isHead: isHead
         )

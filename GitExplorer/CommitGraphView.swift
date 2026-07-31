@@ -14,6 +14,9 @@ struct CommitGraphView: View {
     @State private var tag = "All"
     @State private var dateRange = CommitDateRange.all
     @State private var loading = true
+    @State private var loadingMore = false
+    @State private var hasMoreCommits = false
+    @State private var repositoryStatus: RepositoryStatus?
     @State private var selectedBranch: String?
     @State private var branchDialogPresented = false
     @State private var renamePresented = false
@@ -22,7 +25,10 @@ struct CommitGraphView: View {
     @State private var comparison: String?
 
     private var layouts: [CommitLayout] {
-        allLayouts.filter { layout in
+        let branchCommitIDs = branch == "All"
+            ? nil
+            : CommitGraphFilter.commitIDs(reachableFrom: branch, in: commits)
+        return allLayouts.filter { layout in
             let commit = layout.commit
             let matchesQuery = query.isEmpty ||
                 commit.id.localizedCaseInsensitiveContains(query) ||
@@ -32,7 +38,7 @@ struct CommitGraphView: View {
                 commit.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
             let matchesDate = dateRange.cutoff.map { commit.timestamp >= $0 } ?? true
             return matchesQuery && matchesDate &&
-                (branch == "All" || commit.branches.contains(branch)) &&
+                (branchCommitIDs?.contains(commit.id) ?? true) &&
                 (author == "All" || commit.author == author) &&
                 (tag == "All" || commit.tags.contains(tag))
         }
@@ -62,7 +68,7 @@ struct CommitGraphView: View {
                 graphList
             }
         }
-        .task { await load() }
+        .task(id: repository.id) { await reload() }
         .sheet(item: $selectedCommit) { commit in
             CommitDetailsView(repository: repository, commit: commit)
                 .environmentObject(model)
@@ -124,13 +130,18 @@ struct CommitGraphView: View {
     }
 
     private var graphList: some View {
-        SynchronizedCommitLayers(
+        CommitGraphList(
             layouts: layouts,
-            graphWidth: CGFloat(maxLaneCount) * 18 + 24,
+            graphWidth: min(max(CGFloat(maxLaneCount) * 18 + 24, 58), 280),
             highlightedIDs: highlightedIDs,
             hoveredCommitID: $hoveredCommitID,
             selectedCommit: $selectedCommit,
-            onBranchClick: openBranchActions
+            repositoryStatus: repositoryStatus,
+            onBranchClick: openBranchActions,
+            loadedCommitCount: commits.count,
+            hasMoreCommits: hasMoreCommits,
+            loadingMore: loadingMore,
+            loadMore: { Task { await loadMore() } }
         )
     }
 
@@ -139,14 +150,58 @@ struct CommitGraphView: View {
     private var allAuthors: [String] { Array(Set(commits.map(\.author))).sorted() }
     private var allTags: [String] { Array(Set(commits.flatMap(\.tags))).sorted() }
 
-    private func load() async {
+    private let pageSize = 500
+
+    private func reload() async {
+        loading = true
+        loadingMore = false
+        commits = []
+        allLayouts = []
+        hasMoreCommits = false
+        repositoryStatus = nil
         defer { loading = false }
+        if let url = repository.localURL {
+            repositoryStatus = try? await model.git.status(at: url)
+        }
+        await loadPage(offset: 0)
+    }
+
+    private func loadMore() async {
+        guard hasMoreCommits, !loading, !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        await loadPage(offset: commits.count)
+    }
+
+    private func loadPage(offset: Int) async {
         guard let url = repository.localURL else { return }
         do {
-            commits = try await model.git.commits(at: url)
-            allLayouts = GitGraphLayout.make(commits: commits)
+            let page = try await model.git.commitPage(at: url, offset: offset, limit: pageSize)
+            let combined = offset == 0 ? page.commits : commits + page.commits
+            let linkedCommits = Self.linkingChildren(in: combined)
+            let newLayouts = await Task.detached(priority: .userInitiated) {
+                GitGraphLayout.make(commits: linkedCommits)
+            }.value
+            guard !Task.isCancelled else { return }
+            commits = linkedCommits
+            allLayouts = newLayouts
+            hasMoreCommits = page.hasMore
         }
         catch { model.errorMessage = error.localizedDescription }
+    }
+
+    private static func linkingChildren(in commits: [GitCommit]) -> [GitCommit] {
+        var children: [String: [String]] = [:]
+        for commit in commits {
+            for parent in commit.parents {
+                children[parent, default: []].append(commit.id)
+            }
+        }
+        var result = commits
+        for index in result.indices {
+            result[index].children = children[result[index].id] ?? []
+        }
+        return result
     }
 
     private func openBranchActions(_ branch: String) {
@@ -167,8 +222,7 @@ struct CommitGraphView: View {
                     try await model.git.rename(branch: branch, to: newName, at: url)
                 }
                 if action.requiresReload {
-                    commits = try await model.git.commits(at: url)
-                    allLayouts = GitGraphLayout.make(commits: commits)
+                    await reload()
                 }
             } catch {
                 model.errorMessage = error.localizedDescription
@@ -217,70 +271,76 @@ private struct FilterPicker: View {
     }
 }
 
-private struct SynchronizedCommitLayers: View {
+private struct CommitGraphList: View {
     let layouts: [CommitLayout]
     let graphWidth: CGFloat
     let highlightedIDs: Set<String>
     @Binding var hoveredCommitID: String?
     @Binding var selectedCommit: GitCommit?
+    let repositoryStatus: RepositoryStatus?
     let onBranchClick: (String) -> Void
-    @State private var graphPosition = ScrollPosition(edge: .top)
+    let loadedCommitCount: Int
+    let hasMoreCommits: Bool
+    let loadingMore: Bool
+    let loadMore: () -> Void
     @State private var hoverTarget: CommitHoverTarget?
 
     var body: some View {
-        HStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(layouts) { layout in
-                            LaneCanvas(layout: layout)
-                                .frame(width: graphWidth, height: rowHeight)
-                                .background(rowBackground(for: layout))
-                                .contentShape(Rectangle())
-                                .onContinuousHover { phase in
-                                    updateHover(for: layout.id, surface: .graph, phase: phase)
-                                }
-                            Divider()
-                        }
-                    }
-                }
-                .scrollDisabled(true)
-                .scrollPosition($graphPosition)
-                .scrollIndicators(.hidden)
-                .frame(width: graphWidth)
-            }
-            .defaultScrollAnchor(.leading)
-            .frame(width: min(max(graphWidth, 58), 280))
+        ScrollView(.vertical) {
+            LazyVStack(spacing: 0) {
+                ForEach(layouts) { layout in
+                    HStack(spacing: 0) {
+                        LaneCanvas(
+                            layout: layout,
+                            availableWidth: graphWidth,
+                            totalLaneCount: maxLaneCount
+                        )
+                            .frame(width: graphWidth, height: rowHeight)
 
-            Divider()
-
-            ScrollView([.vertical, .horizontal]) {
-                LazyVStack(spacing: 0) {
-                    ForEach(layouts) { layout in
-                        CommitMetadataRow(commit: layout.commit, onBranchClick: onBranchClick)
+                        CommitMetadataRow(
+                            commit: layout.commit,
+                            repositoryStatus: repositoryStatus,
+                            onBranchClick: onBranchClick
+                        )
                             .frame(height: rowHeight)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(rowBackground(for: layout))
-                            .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                updateHover(for: layout.id, surface: .metadata, phase: phase)
-                            }
-                            .onTapGesture { selectedCommit = layout.commit }
-                        Divider()
                     }
+                    .background(rowBackground(for: layout))
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        updateHover(for: layout.id, surface: .metadata, phase: phase)
+                    }
+                    .onTapGesture { selectedCommit = layout.commit }
                 }
-                .frame(minWidth: 620, alignment: .leading)
-            }
-            .defaultScrollAnchor(.topLeading)
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.y + geometry.contentInsets.top
-            } action: { _, offset in
-                graphPosition.scrollTo(y: max(0, offset))
+
+                loadMoreRow
             }
         }
     }
 
-    private let rowHeight: CGFloat = 62
+    private let rowHeight: CGFloat = 42
+    private var maxLaneCount: Int { layouts.map(\.laneCount).max() ?? 1 }
+
+    @ViewBuilder
+    private var loadMoreRow: some View {
+        if loadingMore {
+            ProgressView("Loading older commits…")
+                .frame(maxWidth: .infinity)
+                .padding()
+        } else if hasMoreCommits {
+            Button("Load older commits") { loadMore() }
+                .buttonStyle(.borderless)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .onAppear { loadMore() }
+        } else {
+            Text("\(loadedCommitCount) commits loaded")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding()
+        }
+    }
 
     private func rowBackground(for layout: CommitLayout) -> Color {
         if hoveredCommitID == layout.id {
@@ -315,6 +375,8 @@ private struct SynchronizedCommitLayers: View {
 
 private struct LaneCanvas: View {
     let layout: CommitLayout
+    let availableWidth: CGFloat
+    let totalLaneCount: Int
     private let colors: [Color] = [.blue, .purple, .orange, .green, .pink, .teal, .yellow, .indigo]
 
     var body: some View {
@@ -327,10 +389,12 @@ private struct LaneCanvas: View {
                 context.stroke(path, with: .color(color(lane)), lineWidth: 2.5)
             }
 
-            var incoming = Path()
-            incoming.move(to: CGPoint(x: x(layout.lane), y: 0))
-            incoming.addLine(to: CGPoint(x: x(layout.lane), y: centerY))
-            context.stroke(incoming, with: .color(color(layout.lane)), lineWidth: 2.5)
+            if layout.hasIncomingConnection {
+                var incoming = Path()
+                incoming.move(to: CGPoint(x: x(layout.lane), y: 0))
+                incoming.addLine(to: CGPoint(x: x(layout.lane), y: centerY))
+                context.stroke(incoming, with: .color(color(layout.lane)), lineWidth: 2.5)
+            }
 
             for connection in layout.connections {
                 var path = Path()
@@ -342,7 +406,7 @@ private struct LaneCanvas: View {
                     control1: CGPoint(x: start.x, y: centerY + size.height * 0.28),
                     control2: CGPoint(x: end.x, y: size.height * 0.72)
                 )
-                context.stroke(path, with: .color(color(connection.toLane)), lineWidth: 2.5)
+                context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
             }
 
             let radius: CGFloat = layout.commit.isHead ? 7 : 5
@@ -361,33 +425,52 @@ private struct LaneCanvas: View {
     }
 
     private func x(_ lane: Int) -> CGFloat {
-        CGFloat(lane) * 18 + 14
+        CGFloat(lane) * laneSpacing + 14
+    }
+    private var laneSpacing: CGFloat {
+        guard totalLaneCount > 1 else { return 18 }
+        return min(18, max(5, (availableWidth - 28) / CGFloat(totalLaneCount - 1)))
     }
     private func color(_ lane: Int) -> Color { colors[lane % colors.count] }
 }
 
 private struct CommitMetadataRow: View {
     let commit: GitCommit
+    let repositoryStatus: RepositoryStatus?
     let onBranchClick: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Text(commit.message).fontWeight(commit.isHead ? .semibold : .regular).lineLimit(1)
-                ForEach(commit.branches, id: \.self) { BranchPill(name: $0, action: onBranchClick) }
-                ForEach(commit.tags, id: \.self) { TagPill(name: $0) }
+        HStack(spacing: 8) {
+            Text(commit.message)
+                .fontWeight(commit.isHead ? .semibold : .regular)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(-1)
+            ForEach(commit.branches, id: \.self) {
+                BranchPill(
+                    name: $0,
+                    divergence: repositoryStatus?.divergence(for: $0),
+                    action: onBranchClick
+                )
             }
-            HStack(spacing: 10) {
-                Text(commit.author)
-                Text(commit.timestamp, style: .relative)
-                Text(commit.abbreviatedID).monospaced()
-                if commit.parents.count > 1 {
-                    Label("Merge", systemImage: "arrow.triangle.merge").labelStyle(.titleAndIcon)
-                }
+            ForEach(commit.tags, id: \.self) { TagPill(name: $0) }
+            Spacer(minLength: 8)
+            Text(commit.author)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(2)
+            Text(commit.timestamp, style: .relative)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(2)
+            Text(commit.abbreviatedID)
+                .monospaced()
+                .fixedSize(horizontal: true, vertical: false)
+            if commit.parents.count > 1 {
+                Image(systemName: "arrow.triangle.merge")
+                    .help("Merge commit")
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
+        .font(.caption)
+        .foregroundStyle(.secondary)
         .padding(.trailing, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -395,10 +478,23 @@ private struct CommitMetadataRow: View {
 
 private struct BranchPill: View {
     let name: String
+    let divergence: BranchDivergence?
     let action: (String) -> Void
     var body: some View {
         Button { action(name) } label: {
-            Label(name, systemImage: name == "HEAD" ? "location.fill" : "arrow.triangle.branch")
+            HStack(spacing: 4) {
+                Label(name, systemImage: name == "HEAD" ? "location.fill" : "arrow.triangle.branch")
+                if let divergence {
+                    if divergence.ahead > 0 {
+                        Text("↑\(divergence.ahead)")
+                            .help("\(divergence.ahead) commits ahead")
+                    }
+                    if divergence.behind > 0 {
+                        Text("↓\(divergence.behind)")
+                            .help("\(divergence.behind) commits behind")
+                    }
+                }
+            }
                 .font(.caption2.bold())
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Color.blue.opacity(0.14), in: Capsule())

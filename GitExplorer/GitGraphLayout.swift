@@ -29,6 +29,24 @@ enum CommitHoverState {
     }
 }
 
+enum CommitGraphFilter {
+    static func commitIDs(reachableFrom branch: String, in commits: [GitCommit]) -> Set<String> {
+        let commitsByID = Dictionary(uniqueKeysWithValues: commits.map { ($0.id, $0) })
+        var reachable = Set(commits.lazy
+            .filter { $0.branches.contains(branch) }
+            .map(\.id))
+        var pending = Array(reachable)
+
+        while let id = pending.popLast(), let commit = commitsByID[id] {
+            for parent in commit.parents where reachable.insert(parent).inserted {
+                pending.append(parent)
+            }
+        }
+
+        return reachable
+    }
+}
+
 enum GitGraphLayout {
     static func make(commits: [GitCommit]) -> [CommitLayout] {
         var lanes: [String?] = []
@@ -36,6 +54,7 @@ enum GitGraphLayout {
 
         for commit in commits {
             let matching = lanes.indices.filter { lanes[$0] == commit.id }
+            let hasIncomingConnection = !matching.isEmpty
             let lane: Int
             if let first = matching.first {
                 lane = first
@@ -54,19 +73,28 @@ enum GitGraphLayout {
 
             for (index, parent) in commit.parents.enumerated() {
                 let parentLane: Int
+                let colorLane: Int
                 if let existing = lanes.firstIndex(where: { $0 == parent }) {
                     parentLane = existing
+                    // Keep the source lane's colour as it joins an already active
+                    // line, so the terminating branch visibly merges into it.
+                    colorLane = lane
                 } else if index == 0 && lanes[lane] == nil {
                     parentLane = lane
                     lanes[lane] = parent
+                    colorLane = parentLane
                 } else if let empty = lanes.firstIndex(where: { $0 == nil }) {
                     parentLane = empty
                     lanes[empty] = parent
+                    colorLane = parentLane
                 } else {
                     parentLane = lanes.count
                     lanes.append(parent)
+                    colorLane = parentLane
                 }
-                connections.append(.init(fromLane: lane, toLane: parentLane))
+                connections.append(
+                    .init(fromLane: lane, toLane: parentLane, colorLane: colorLane)
+                )
             }
 
             output.append(
@@ -75,7 +103,8 @@ enum GitGraphLayout {
                     lane: lane,
                     laneCount: max(lanes.count, lane + 1),
                     connections: connections,
-                    passThroughLanes: passThroughLanes
+                    passThroughLanes: passThroughLanes,
+                    hasIncomingConnection: hasIncomingConnection
                 )
             )
 

@@ -97,7 +97,9 @@ actor GitService {
         let porcelain = try run(["-C", repository.path, "status", "--porcelain=v2", "--branch"])
         var result = RepositoryStatus(branch: branch.isEmpty ? "Detached HEAD" : branch)
         for line in porcelain.split(separator: "\n") {
-            if line.hasPrefix("# branch.ab ") {
+            if line.hasPrefix("# branch.upstream ") {
+                result.upstream = String(line.dropFirst("# branch.upstream ".count))
+            } else if line.hasPrefix("# branch.ab ") {
                 for part in line.split(separator: " ") {
                     if part.hasPrefix("+") { result.ahead = Int(part.dropFirst()) ?? 0 }
                     if part.hasPrefix("-") { result.behind = Int(part.dropFirst()) ?? 0 }
@@ -109,11 +111,12 @@ actor GitService {
         return result
     }
 
-    func commits(at repository: URL, limit: Int = 20_000) throws -> [GitCommit] {
+    func commits(at repository: URL, limit: Int = 20_000, offset: Int = 0) throws -> [GitCommit] {
         let format = "%H%x1f%P%x1f%an%x1f%aI%x1f%s%x1f%D%x1e"
         let raw = try run([
             "-C", repository.path, "log", "--all", "--topo-order",
-            "--date-order", "--max-count=\(limit)", "--pretty=format:\(format)"
+            "--date-order", "--skip=\(offset)", "--max-count=\(limit)",
+            "--pretty=format:\(format)"
         ])
         var commits = raw.split(separator: Character(recordSeparator), omittingEmptySubsequences: true)
             .compactMap { parseCommit(String($0)) }
@@ -124,6 +127,14 @@ actor GitService {
         }
         for index in commits.indices { commits[index].children = children[commits[index].id] ?? [] }
         return commits
+    }
+
+    func commitPage(at repository: URL, offset: Int, limit: Int) throws -> GitCommitPage {
+        let results = try commits(at: repository, limit: limit + 1, offset: offset)
+        return GitCommitPage(
+            commits: Array(results.prefix(limit)),
+            hasMore: results.count > limit
+        )
     }
 
     func readREADME(at repository: URL) throws -> String? {
@@ -227,9 +238,22 @@ actor GitService {
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
+
+        let outputReader = ProcessOutputReader()
+        let readers = DispatchGroup()
+        readers.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            outputReader.setOutput(stdout.fileHandleForReading.readDataToEndOfFile())
+            readers.leave()
+        }
+        readers.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            outputReader.setError(stderr.fileHandleForReading.readDataToEndOfFile())
+            readers.leave()
+        }
         process.waitUntilExit()
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let error = stderr.fileHandleForReading.readDataToEndOfFile()
+        readers.wait()
+        let (output, error) = outputReader.result
         guard process.terminationStatus == 0 else {
             throw GitServiceError.failed(
                 arguments: arguments,
@@ -249,5 +273,23 @@ actor GitService {
             return String(value[value.index(after: colon)...])
         }
         return nil
+    }
+}
+
+private final class ProcessOutputReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var output = Data()
+    private var error = Data()
+
+    func setOutput(_ data: Data) {
+        lock.withLock { output = data }
+    }
+
+    func setError(_ data: Data) {
+        lock.withLock { error = data }
+    }
+
+    var result: (Data, Data) {
+        lock.withLock { (output, error) }
     }
 }

@@ -30,9 +30,15 @@ struct GitCommit: Identifiable, Hashable {
     var abbreviatedID: String { String(id.prefix(7)) }
 }
 
+struct GitCommitPage {
+    let commits: [GitCommit]
+    let hasMore: Bool
+}
+
 struct CommitConnection: Hashable {
     let fromLane: Int
     let toLane: Int
+    let colorLane: Int
 }
 
 struct CommitLayout: Identifiable, Hashable {
@@ -42,13 +48,34 @@ struct CommitLayout: Identifiable, Hashable {
     let laneCount: Int
     let connections: [CommitConnection]
     let passThroughLanes: [Int]
+    let hasIncomingConnection: Bool
 }
 
 struct RepositoryStatus: Equatable {
     var branch = "Detached HEAD"
+    var upstream: String?
     var ahead = 0
     var behind = 0
     var hasChanges = false
+
+    func divergence(for reference: String) -> BranchDivergence? {
+        if reference == branch {
+            return BranchDivergence(ahead: ahead, behind: behind).nonzero
+        }
+        if reference == upstream {
+            return BranchDivergence(ahead: behind, behind: ahead).nonzero
+        }
+        return nil
+    }
+}
+
+struct BranchDivergence: Equatable {
+    let ahead: Int
+    let behind: Int
+
+    fileprivate var nonzero: Self? {
+        ahead > 0 || behind > 0 ? self : nil
+    }
 }
 
 enum GitAvailability: Equatable {
@@ -69,8 +96,8 @@ struct CommitDetails {
 }
 
 enum RepositoryFilter: String, CaseIterable, Identifiable {
-    case all = "All repositories"
-    case local = "Local"
-    case remoteOnly = "Remote only"
+    case all = "all"
+    case local = "local"
+    case remoteOnly = "remote"
     var id: Self { self }
 }
