@@ -47,7 +47,100 @@ enum CommitGraphFilter {
     }
 }
 
+struct CommitBranchLabel: Equatable {
+    let name: String
+    let actionName: String
+    let includesRemote: Bool
+}
+
+enum CommitReferencePresentation {
+    static func branchLabels(for branches: [String]) -> [CommitBranchLabel] {
+        let names = Set(branches)
+        var seen: Set<String> = []
+        var labels: [CommitBranchLabel] = []
+
+        for branch in branches {
+            guard branch != "origin/HEAD" else { continue }
+
+            if branch.hasPrefix("origin/") {
+                let localName = String(branch.dropFirst("origin/".count))
+                if names.contains(localName) { continue }
+            }
+
+            guard seen.insert(branch).inserted else { continue }
+            let remoteName = "origin/\(branch)"
+            labels.append(CommitBranchLabel(
+                name: branch,
+                actionName: branch,
+                includesRemote: names.contains(remoteName)
+            ))
+        }
+
+        return labels
+    }
+}
+
+enum CommitAgeFormatter {
+    static func string(for date: Date, relativeTo now: Date = Date()) -> String {
+        let elapsed = max(0, now.timeIntervalSince(date))
+        let minute = 60.0
+        let hour = minute * 60
+        let day = hour * 24
+        let week = day * 7
+
+        if elapsed < hour {
+            return unit(max(1, Int(elapsed / minute)), singular: "min", plural: "mins")
+        }
+        if elapsed < day {
+            return unit(Int(elapsed / hour), singular: "hr", plural: "hrs")
+        }
+        if elapsed < week {
+            return unit(Int(elapsed / day), singular: "day", plural: "days")
+        }
+        if elapsed <= week * 4 {
+            return unit(Int(elapsed / week), singular: "wk", plural: "wks")
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_AU")
+        formatter.dateFormat = "d MMM yy"
+        return formatter.string(from: date)
+    }
+
+    private static func unit(_ value: Int, singular: String, plural: String) -> String {
+        "\(value) \(value == 1 ? singular : plural)"
+    }
+}
+
 enum GitGraphLayout {
+    private static let workingTreeID = "git-explorer-working-tree"
+
+    static func makeRepositoryLayout(
+        commits: [GitCommit],
+        hasUncommittedChanges: Bool
+    ) -> RepositoryGraphLayout {
+        guard hasUncommittedChanges else {
+            return RepositoryGraphLayout(workingTree: nil, commits: make(commits: commits))
+        }
+
+        let headID = commits.first(where: \.isHead)?.id
+        let workingTree = GitCommit(
+            id: workingTreeID,
+            parents: headID.map { [$0] } ?? [],
+            author: "",
+            timestamp: Date(),
+            message: "Uncommitted changes",
+            branches: [],
+            tags: [],
+            isHead: false
+        )
+        let layouts = make(commits: [workingTree] + commits)
+        return RepositoryGraphLayout(
+            workingTree: layouts.first,
+            commits: Array(layouts.dropFirst())
+        )
+    }
+
     static func make(commits: [GitCommit]) -> [CommitLayout] {
         var lanes: [String?] = []
         var output: [CommitLayout] = []
@@ -56,15 +149,21 @@ enum GitGraphLayout {
             let matching = lanes.indices.filter { lanes[$0] == commit.id }
             let hasIncomingConnection = !matching.isEmpty
             let lane: Int
+            let incomingConnections: [CommitConnection]
             if let first = matching.first {
                 lane = first
+                incomingConnections = matching.dropFirst().map {
+                    CommitConnection(fromLane: $0, toLane: lane, colorLane: $0)
+                }
                 for duplicate in matching.dropFirst() { lanes[duplicate] = nil }
             } else if let empty = lanes.firstIndex(where: { $0 == nil }) {
                 lane = empty
                 lanes[empty] = commit.id
+                incomingConnections = []
             } else {
                 lane = lanes.count
                 lanes.append(commit.id)
+                incomingConnections = []
             }
 
             let passThroughLanes = lanes.indices.filter { $0 != lane && lanes[$0] != nil }
@@ -74,11 +173,20 @@ enum GitGraphLayout {
             for (index, parent) in commit.parents.enumerated() {
                 let parentLane: Int
                 let colorLane: Int
-                if let existing = lanes.firstIndex(where: { $0 == parent }) {
-                    parentLane = existing
-                    // Keep the source lane's colour as it joins an already active
-                    // line, so the terminating branch visibly merges into it.
-                    colorLane = lane
+                if lanes.contains(where: { $0 == parent }) {
+                    // Keep a second reservation for the shared parent so this
+                    // branch remains visible until it reaches that parent row.
+                    // The duplicate reservations are joined at the parent node.
+                    if index == 0 && lanes[lane] == nil {
+                        parentLane = lane
+                    } else if let empty = lanes.firstIndex(where: { $0 == nil }) {
+                        parentLane = empty
+                    } else {
+                        parentLane = lanes.count
+                        lanes.append(nil)
+                    }
+                    lanes[parentLane] = parent
+                    colorLane = parentLane
                 } else if index == 0 && lanes[lane] == nil {
                     parentLane = lane
                     lanes[lane] = parent
@@ -103,6 +211,7 @@ enum GitGraphLayout {
                     lane: lane,
                     laneCount: max(lanes.count, lane + 1),
                     connections: connections,
+                    incomingConnections: incomingConnections,
                     passThroughLanes: passThroughLanes,
                     hasIncomingConnection: hasIncomingConnection
                 )

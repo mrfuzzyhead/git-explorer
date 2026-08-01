@@ -98,6 +98,42 @@ final class GitServiceTests: XCTestCase {
         XCTAssertTrue(status.hasChanges)
     }
 
+    func testFetchUpdatesRemoteTrackingBranchAndBehindCount() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerFetchFixture-\(UUID().uuidString)")
+        let remote = root.appendingPathComponent("remote.git")
+        let source = root.appendingPathComponent("source")
+        let checkout = root.appendingPathComponent("checkout")
+        try FileManager.default.createDirectory(at: remote, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+        try git(["init", "--bare"], at: remote)
+        try git(["init", "-b", "main"], at: source)
+        try git(["config", "user.name", "Git Explorer Tests"], at: source)
+        try git(["config", "user.email", "tests@example.invalid"], at: source)
+        try write("one\n", to: source.appendingPathComponent("history.txt"))
+        try git(["add", "."], at: source)
+        try git(["commit", "-m", "First"], at: source)
+        try git(["remote", "add", "origin", remote.path], at: source)
+        try git(["push", "-u", "origin", "main"], at: source)
+        try git(["symbolic-ref", "HEAD", "refs/heads/main"], at: remote)
+        try git(["clone", remote.path, checkout.path], at: root)
+
+        try write("two\n", to: source.appendingPathComponent("history.txt"))
+        try git(["add", "."], at: source)
+        try git(["commit", "-m", "Second"], at: source)
+        try git(["push"], at: source)
+
+        let service = GitService()
+        let statusBeforeFetch = try await service.status(at: checkout)
+        XCTAssertEqual(statusBeforeFetch.behind, 0)
+        try await service.fetch(at: checkout)
+        let status = try await service.status(at: checkout)
+        XCTAssertEqual(status.upstream, "origin/main")
+        XCTAssertEqual(status.behind, 1)
+    }
+
     private func write(_ contents: String, to url: URL) throws {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }

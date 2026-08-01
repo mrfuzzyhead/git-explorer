@@ -27,6 +27,8 @@ The app is written in SwiftUI and targets the current development Mac:
 ### Remote repositories
 
 - Renders the repository README when one exists.
+- Browses the default branch's commit graph, commit details, folders, and text
+  files directly through the GitHub API without requiring a clone.
 - Shows privacy, default branch, relative update time, and HTTPS clone URL.
 - Opens the repository on GitHub.
 - Clones into the configured local repositories folder.
@@ -35,8 +37,10 @@ The app is written in SwiftUI and targets the current development Mac:
 
 ### Local repositories
 
-- Shows the checked-out branch, ahead/behind counts, and uncommitted-change
-  status.
+- Fetches and prunes remote references when the graph opens, then shows updated
+  remote branches and ahead/behind counts alongside the checked-out branch.
+- Provides Fetch, fast-forward-only Pull, Push, and Sync (pull then push)
+  controls in the repository header.
 - Renders the local README.
 - Browses files and folders without exposing hidden files.
 - Displays an interactive Git history graph.
@@ -163,7 +167,7 @@ GitExplorerApp
 └── AppModel
     ├── GitHubService
     │   ├── paginated repository and organization requests
-    │   ├── remote README requests
+    │   ├── remote README, commit, contents, and file requests
     │   └── Keychain-backed PAT storage
     └── GitService
         ├── Git executable detection
@@ -231,6 +235,8 @@ project.yml
   `dist`.
 - Graph loading starts with the newest 500 commits and loads older history as
   the user reaches the end of the graph.
+- Remote graphs follow the repository's default branch and load in 100-commit
+  GitHub API pages; remote branch mutations still require a local clone.
 - Repository cloning uses the repository name under the selected root. If that
   destination already exists, Git reports the conflict and no files are
   overwritten.

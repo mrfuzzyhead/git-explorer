@@ -8,10 +8,8 @@ struct FileBrowserView: View {
             FileExplorerWorkspace(root: root)
                 .id(root)
         } else {
-            ContentUnavailableView(
-                "Repository unavailable",
-                systemImage: "folder.badge.questionmark"
-            )
+            RemoteFileExplorerWorkspace(repository: repository)
+                .id(repository.id)
         }
     }
 }
@@ -25,6 +23,13 @@ private struct FileExplorerWorkspace: View {
     @State private var entriesByDirectory: [URL: [URL]] = [:]
     @State private var loadingDirectories: Set<URL> = []
     @State private var directoryErrors: [URL: String] = [:]
+    @State private var treePaneWidth: CGFloat = 280
+    @GestureState private var treePaneDragOffset: CGFloat = 0
+
+    private let minimumTreePaneWidth: CGFloat = 220
+    private let maximumTreePaneWidth: CGFloat = 420
+    private let minimumPreviewWidth: CGFloat = 400
+    private let resizeHandleWidth: CGFloat = 8
 
     init(root: URL) {
         self.root = root
@@ -33,20 +38,30 @@ private struct FileExplorerWorkspace: View {
     }
 
     var body: some View {
-        HSplitView {
-            ExplorerTreePane(
-                root: root,
-                selection: $selection,
-                expandedDirectories: $expandedDirectories,
-                entriesByDirectory: entriesByDirectory,
-                loadingDirectories: loadingDirectories,
-                directoryErrors: directoryErrors,
-                onLoadDirectory: requestLoad
+        GeometryReader { geometry in
+            let resolvedTreePaneWidth = clampedTreePaneWidth(
+                treePaneWidth + treePaneDragOffset,
+                containerWidth: geometry.size.width
             )
-            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
 
-            preview
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 0) {
+                ExplorerTreePane(
+                    root: root,
+                    selection: $selection,
+                    expandedDirectories: $expandedDirectories,
+                    entriesByDirectory: entriesByDirectory,
+                    loadingDirectories: loadingDirectories,
+                    directoryErrors: directoryErrors,
+                    onLoadDirectory: requestLoad
+                )
+                .frame(width: resolvedTreePaneWidth)
+
+                resizeHandle(containerWidth: geometry.size.width)
+
+                preview
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
+            }
         }
         .task {
             await loadDirectoryIfNeeded(root)
@@ -61,8 +76,6 @@ private struct FileExplorerWorkspace: View {
     private var preview: some View {
         if selection.isDirectory {
             FolderPreview(
-                directory: selection,
-                root: root,
                 entries: entriesByDirectory[selection],
                 isLoading: loadingDirectories.contains(selection),
                 error: directoryErrors[selection],
@@ -77,7 +90,46 @@ private struct FileExplorerWorkspace: View {
 
     private func select(_ item: URL) {
         guard ExplorerPath.contains(item, in: root) else { return }
-        selection = item.standardizedFileURL
+        let item = item.standardizedFileURL
+        selection = item
+
+        guard item.isDirectory else { return }
+        let directories = ExplorerPath.crumbs(from: root, to: item)
+        expandedDirectories.formUnion(directories)
+        directories.forEach(requestLoad)
+    }
+
+    private func clampedTreePaneWidth(_ proposedWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
+        let availableMaximum = max(
+            minimumTreePaneWidth,
+            containerWidth - minimumPreviewWidth - resizeHandleWidth
+        )
+        return min(max(proposedWidth, minimumTreePaneWidth), min(maximumTreePaneWidth, availableMaximum))
+    }
+
+    private func resizeHandle(containerWidth: CGFloat) -> some View {
+        Rectangle()
+            .fill(.clear)
+            .frame(width: resizeHandleWidth)
+            .overlay {
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(width: 1)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($treePaneDragOffset) { value, offset, _ in
+                        offset = value.translation.width
+                    }
+                    .onEnded { value in
+                        treePaneWidth = clampedTreePaneWidth(
+                            treePaneWidth + value.translation.width,
+                            containerWidth: containerWidth
+                        )
+                    }
+            )
+            .help("Drag to resize the folder pane")
     }
 
     @MainActor
@@ -114,19 +166,34 @@ private struct ExplorerTreePane: View {
     let onLoadDirectory: (URL) -> Void
 
     var body: some View {
-        List {
-            ExplorerTreeNode(
-                url: root,
-                selection: $selection,
-                expandedDirectories: $expandedDirectories,
-                entriesByDirectory: entriesByDirectory,
-                loadingDirectories: loadingDirectories,
-                directoryErrors: directoryErrors,
-                onLoadDirectory: onLoadDirectory,
-                isRepositoryRoot: true
-            )
+        ScrollViewReader { proxy in
+            List {
+                ExplorerTreeNode(
+                    url: root,
+                    selection: $selection,
+                    expandedDirectories: $expandedDirectories,
+                    entriesByDirectory: entriesByDirectory,
+                    loadingDirectories: loadingDirectories,
+                    directoryErrors: directoryErrors,
+                    onLoadDirectory: onLoadDirectory,
+                    isRepositoryRoot: true
+                )
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(Color.primary.opacity(0.045))
+            .onChange(of: selection) { _, selection in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(selection, anchor: .center)
+                }
+            }
+            .overlay {
+                if loadingDirectories.contains(root), entriesByDirectory[root] == nil {
+                    PaneLoadingView("Loading files…")
+                        .background(.regularMaterial)
+                }
+            }
         }
-        .listStyle(.sidebar)
         .accessibilityLabel("Files and folders in \(root.lastPathComponent)")
     }
 }
@@ -202,6 +269,7 @@ private struct ExplorerTreeNode: View {
             }
         }
         .buttonStyle(.plain)
+        .id(url)
         .help(isRepositoryRoot ? "Show repository contents" : url.isDirectory ? "Show folder contents" : "Preview file")
     }
 
@@ -220,8 +288,6 @@ private struct ExplorerTreeNode: View {
 }
 
 private struct FolderPreview: View {
-    let directory: URL
-    let root: URL
     let entries: [URL]?
     let isLoading: Bool
     let error: String?
@@ -229,34 +295,8 @@ private struct FolderPreview: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 9) {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(.blue)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(directory.lastPathComponent)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(ExplorerPath.relativePath(of: directory, from: root))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer()
-                if let entries {
-                    Text(entries.count == 1 ? "1 item" : "\(entries.count) items")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 48)
-            .background(.bar)
-            Divider()
-
             if isLoading && entries == nil {
-                ProgressView("Loading folder…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                PaneLoadingView("Loading folder…")
             } else if let error {
                 ContentUnavailableView(
                     "Couldn’t open folder",
@@ -284,6 +324,7 @@ private struct FolderPreview: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .listRowSeparator(.hidden)
                     .help(entry.isDirectory ? "Show folder contents" : "Preview file")
                 }
                 .listStyle(.inset)
@@ -364,13 +405,14 @@ private struct FilePreview: View {
                     description: Text(readError)
                 )
             } else {
-                ProgressView("Loading preview…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                PaneLoadingView("Loading preview…")
             }
         }
         .task {
             do {
-                contents = try String(contentsOf: url, encoding: .utf8)
+                contents = try await Task.detached(priority: .userInitiated) {
+                    try String(contentsOf: url, encoding: .utf8)
+                }.value
             } catch {
                 readError = "This file isn’t UTF-8 text, or it can’t be read."
             }
@@ -437,5 +479,260 @@ enum ExplorerPath {
 private extension URL {
     var isDirectory: Bool {
         (try? resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+    }
+}
+
+private struct RemoteFileExplorerWorkspace: View {
+    @EnvironmentObject private var model: AppModel
+    let repository: Repository
+
+    @State private var selection: RemoteFileEntry?
+    @State private var expanded: Set<String> = [""]
+    @State private var entriesByPath: [String: [RemoteFileEntry]] = [:]
+    @State private var loadingPaths: Set<String> = []
+    @State private var errors: [String: String] = [:]
+
+    private var root: RemoteFileEntry {
+        RemoteFileEntry(name: repository.name, path: "", kind: .directory, size: 0, webURL: repository.webURL)
+    }
+
+    var body: some View {
+        HSplitView {
+            List {
+                RemoteFileTreeNode(
+                    entry: root,
+                    selection: $selection,
+                    expanded: $expanded,
+                    entriesByPath: entriesByPath,
+                    loadingPaths: loadingPaths,
+                    errors: errors,
+                    onLoad: requestLoad,
+                    isRoot: true
+                )
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
+
+            remotePreview
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .task { await load(path: "") }
+    }
+
+    @ViewBuilder
+    private var remotePreview: some View {
+        if let selection, selection.kind == .file {
+            RemoteFilePreview(repository: repository, entry: selection)
+                .id(selection.path)
+        } else {
+            let directory = selection?.path ?? ""
+            RemoteFolderPreview(
+                entries: entriesByPath[directory],
+                isLoading: loadingPaths.contains(directory),
+                error: errors[directory],
+                onSelect: { entry in
+                    selection = entry
+                    if entry.kind == .directory {
+                        expanded.insert(entry.path)
+                        requestLoad(entry.path)
+                    }
+                }
+            )
+        }
+    }
+
+    private func requestLoad(_ path: String) {
+        Task { await load(path: path) }
+    }
+
+    @MainActor
+    private func load(path: String) async {
+        guard entriesByPath[path] == nil, !loadingPaths.contains(path), !model.githubToken.isEmpty else { return }
+        loadingPaths.insert(path)
+        errors[path] = nil
+        do {
+            entriesByPath[path] = try await model.github.files(
+                fullName: repository.fullName,
+                path: path,
+                reference: repository.defaultBranch,
+                token: model.githubToken
+            )
+        } catch {
+            errors[path] = error.localizedDescription
+            model.errorMessage = error.localizedDescription
+        }
+        loadingPaths.remove(path)
+    }
+}
+
+private struct RemoteFileTreeNode: View {
+    let entry: RemoteFileEntry
+    @Binding var selection: RemoteFileEntry?
+    @Binding var expanded: Set<String>
+    let entriesByPath: [String: [RemoteFileEntry]]
+    let loadingPaths: Set<String>
+    let errors: [String: String]
+    let onLoad: (String) -> Void
+    var isRoot = false
+
+    @ViewBuilder
+    var body: some View {
+        if entry.kind == .directory {
+            DisclosureGroup(isExpanded: expansion) {
+                if loadingPaths.contains(entry.path), entriesByPath[entry.path] == nil {
+                    ProgressView().controlSize(.small).padding(.leading, 20)
+                } else if errors[entry.path] != nil {
+                    Label("Unable to load folder", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                } else {
+                    ForEach(entriesByPath[entry.path] ?? []) { child in
+                        RemoteFileTreeNode(
+                            entry: child,
+                            selection: $selection,
+                            expanded: $expanded,
+                            entriesByPath: entriesByPath,
+                            loadingPaths: loadingPaths,
+                            errors: errors,
+                            onLoad: onLoad
+                        )
+                    }
+                }
+            } label: { label }
+        } else {
+            label
+        }
+    }
+
+    private var label: some View {
+        Button { selection = entry } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isRoot ? "shippingbox.fill" : entry.kind == .directory ? "folder.fill" : "doc")
+                    .foregroundStyle(entry.kind == .directory ? Color.blue : Color.accentColor)
+                    .frame(width: 18)
+                Text(entry.name).lineLimit(1)
+                Spacer(minLength: 4)
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var expansion: Binding<Bool> {
+        Binding {
+            expanded.contains(entry.path)
+        } set: { value in
+            if value {
+                expanded.insert(entry.path)
+                onLoad(entry.path)
+            } else {
+                expanded.remove(entry.path)
+            }
+        }
+    }
+}
+
+private struct RemoteFolderPreview: View {
+    let entries: [RemoteFileEntry]?
+    let isLoading: Bool
+    let error: String?
+    let onSelect: (RemoteFileEntry) -> Void
+
+    var body: some View {
+        if isLoading && entries == nil {
+            PaneLoadingView("Loading folder…")
+        } else if let error {
+            ContentUnavailableView("Couldn’t open folder", systemImage: "exclamationmark.triangle", description: Text(error))
+        } else if entries?.isEmpty == true {
+            ContentUnavailableView("Empty folder", systemImage: "folder")
+        } else {
+            List(entries ?? []) { entry in
+                Button { onSelect(entry) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: entry.kind == .directory ? "folder.fill" : "doc")
+                            .foregroundStyle(entry.kind == .directory ? Color.blue : Color.accentColor)
+                            .frame(width: 18)
+                        Text(entry.name).lineLimit(1)
+                        Spacer()
+                        if entry.kind == .directory {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .listRowSeparator(.hidden)
+            }
+            .listStyle(.inset)
+        }
+    }
+}
+
+private struct RemoteFilePreview: View {
+    @EnvironmentObject private var model: AppModel
+    let repository: Repository
+    let entry: RemoteFileEntry
+    @State private var contents: String?
+    @State private var errorMessage: String?
+
+    private var syntheticURL: URL { URL(fileURLWithPath: entry.path) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "icloud.and.arrow.down")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.name).font(.headline).lineLimit(1)
+                    Text(entry.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                if let webURL = entry.webURL {
+                    Link("Open on GitHub", destination: webURL)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .background(.bar)
+            Divider()
+
+            if let contents {
+                if MarkdownDocument.isMarkdownFile(syntheticURL) {
+                    MarkdownPreviewView(markdown: contents, baseURL: entry.webURL)
+                } else {
+                    ScrollView([.vertical, .horizontal]) {
+                        Group {
+                            if let language = SourceLanguage(url: syntheticURL) {
+                                Text(SourceSyntaxHighlighter.highlight(contents, as: language))
+                            } else {
+                                Text(contents)
+                            }
+                        }
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                }
+            } else if let errorMessage {
+                ContentUnavailableView("Preview unavailable", systemImage: "doc.badge.ellipsis", description: Text(errorMessage))
+            } else {
+                PaneLoadingView("Loading preview…")
+            }
+        }
+        .task {
+            do {
+                contents = try await model.github.fileContents(
+                    fullName: repository.fullName,
+                    path: entry.path,
+                    reference: repository.defaultBranch,
+                    token: model.githubToken
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 }

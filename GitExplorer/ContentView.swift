@@ -6,27 +6,26 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             RepositorySidebar()
-                .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 420)
+                .navigationSplitViewColumnWidth(300)
         } detail: {
-            if let repository = model.selectedRepository {
-                RepositoryDetailView(repository: repository)
-                    .id(repository.id)
-            } else {
-                ContentUnavailableView(
-                    "Select a Repository",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Choose a repository from the sidebar to explore it.")
-                )
-            }
-        }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    Task { await model.refresh() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+            ZStack {
+                if let repository = model.selectedRepository {
+                    RepositoryDetailView(repository: repository)
+                        .id(repository.id)
+                } else if !model.isLoading {
+                    ContentUnavailableView(
+                        "Select a Repository",
+                        systemImage: "point.3.connected.trianglepath.dotted",
+                        description: Text("Choose a repository from the sidebar to explore it.")
+                    )
                 }
-                .disabled(model.isLoading)
+
+                if model.isLoading {
+                    PaneLoadingView(
+                        model.repositories.isEmpty ? "Loading repository…" : "Refreshing repository…"
+                    )
+                    .background(.regularMaterial)
+                }
             }
         }
         .overlay(alignment: .bottom) {
@@ -40,6 +39,27 @@ struct ContentView: View {
                 GitMissingBanner(message: message)
             }
         }
+    }
+}
+
+struct PaneLoadingView: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
     }
 }
 

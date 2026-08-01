@@ -3,16 +3,15 @@ import SwiftUI
 struct CommitGraphView: View {
     @EnvironmentObject private var model: AppModel
     let repository: Repository
+    var reloadToken = 0
+    var onStatusChange: (RepositoryStatus) -> Void = { _ in }
 
     @State private var commits: [GitCommit] = []
     @State private var allLayouts: [CommitLayout] = []
+    @State private var workingTreeLayout: CommitLayout?
     @State private var selectedCommit: GitCommit?
     @State private var hoveredCommitID: String?
     @State private var query = ""
-    @State private var branch = "All"
-    @State private var author = "All"
-    @State private var tag = "All"
-    @State private var dateRange = CommitDateRange.all
     @State private var loading = true
     @State private var loadingMore = false
     @State private var hasMoreCommits = false
@@ -25,22 +24,14 @@ struct CommitGraphView: View {
     @State private var comparison: String?
 
     private var layouts: [CommitLayout] {
-        let branchCommitIDs = branch == "All"
-            ? nil
-            : CommitGraphFilter.commitIDs(reachableFrom: branch, in: commits)
         return allLayouts.filter { layout in
             let commit = layout.commit
-            let matchesQuery = query.isEmpty ||
+            return query.isEmpty ||
                 commit.id.localizedCaseInsensitiveContains(query) ||
                 commit.message.localizedCaseInsensitiveContains(query) ||
                 commit.author.localizedCaseInsensitiveContains(query) ||
                 commit.branches.contains(where: { $0.localizedCaseInsensitiveContains(query) }) ||
                 commit.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
-            let matchesDate = dateRange.cutoff.map { commit.timestamp >= $0 } ?? true
-            return matchesQuery && matchesDate &&
-                (branchCommitIDs?.contains(commit.id) ?? true) &&
-                (author == "All" || commit.author == author) &&
-                (tag == "All" || commit.tags.contains(tag))
         }
     }
 
@@ -62,13 +53,13 @@ struct CommitGraphView: View {
             if loading {
                 ProgressView("Loading commit history…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if layouts.isEmpty {
+            } else if layouts.isEmpty, workingTreeLayout == nil {
                 ContentUnavailableView.search(text: query)
             } else {
                 graphList
             }
         }
-        .task(id: repository.id) { await reload() }
+        .task(id: "\(repository.id)-\(reloadToken)") { await reload() }
         .sheet(item: $selectedCommit) { commit in
             CommitDetailsView(repository: repository, commit: commit)
                 .environmentObject(model)
@@ -108,23 +99,11 @@ struct CommitGraphView: View {
     }
 
     private var graphControls: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
-                TextField("Search SHA, message, author, branch, or tag", text: $query)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 220)
-                Spacer()
-            }
-            HStack(spacing: 10) {
-                FilterPicker(title: "Branch", allTitle: "All branches", selection: $branch, values: allBranches)
-                FilterPicker(title: "Author", allTitle: "All authors", selection: $author, values: allAuthors)
-                FilterPicker(title: "Tag", allTitle: "All tags", selection: $tag, values: allTags)
-                Picker("Date", selection: $dateRange) {
-                    ForEach(CommitDateRange.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .frame(maxWidth: 150)
-                Spacer()
-            }
+        HStack(spacing: 10) {
+            TextField("Search SHA, message, author, branch, or tag", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 220)
+            Spacer()
         }
         .padding(10)
     }
@@ -137,6 +116,7 @@ struct CommitGraphView: View {
             hoveredCommitID: $hoveredCommitID,
             selectedCommit: $selectedCommit,
             repositoryStatus: repositoryStatus,
+            workingTreeLayout: workingTreeLayout,
             onBranchClick: openBranchActions,
             loadedCommitCount: commits.count,
             hasMoreCommits: hasMoreCommits,
@@ -145,23 +125,28 @@ struct CommitGraphView: View {
         )
     }
 
-    private var maxLaneCount: Int { layouts.map(\.laneCount).max() ?? 1 }
-    private var allBranches: [String] { Array(Set(commits.flatMap(\.branches))).sorted() }
-    private var allAuthors: [String] { Array(Set(commits.map(\.author))).sorted() }
-    private var allTags: [String] { Array(Set(commits.flatMap(\.tags))).sorted() }
-
-    private let pageSize = 500
+    private var maxLaneCount: Int {
+        max(layouts.map(\.laneCount).max() ?? 1, workingTreeLayout?.laneCount ?? 1)
+    }
+    private var pageSize: Int { repository.isLocal ? 500 : 100 }
 
     private func reload() async {
         loading = true
         loadingMore = false
         commits = []
         allLayouts = []
+        workingTreeLayout = nil
         hasMoreCommits = false
         repositoryStatus = nil
         defer { loading = false }
         if let url = repository.localURL {
+            do {
+                try await model.git.fetch(at: url)
+            } catch {
+                model.errorMessage = "Couldn’t refresh remotes: \(error.localizedDescription)"
+            }
             repositoryStatus = try? await model.git.status(at: url)
+            if let repositoryStatus { onStatusChange(repositoryStatus) }
         }
         await loadPage(offset: 0)
     }
@@ -174,17 +159,33 @@ struct CommitGraphView: View {
     }
 
     private func loadPage(offset: Int) async {
-        guard let url = repository.localURL else { return }
         do {
-            let page = try await model.git.commitPage(at: url, offset: offset, limit: pageSize)
+            let page: GitCommitPage
+            if let url = repository.localURL {
+                page = try await model.git.commitPage(at: url, offset: offset, limit: pageSize)
+            } else {
+                guard !model.githubToken.isEmpty else { return }
+                page = try await model.github.commitPage(
+                    fullName: repository.fullName,
+                    branch: repository.defaultBranch,
+                    offset: offset,
+                    limit: pageSize,
+                    token: model.githubToken
+                )
+            }
             let combined = offset == 0 ? page.commits : commits + page.commits
             let linkedCommits = Self.linkingChildren(in: combined)
-            let newLayouts = await Task.detached(priority: .userInitiated) {
-                GitGraphLayout.make(commits: linkedCommits)
+            let hasUncommittedChanges = repositoryStatus?.hasChanges == true
+            let graphLayout = await Task.detached(priority: .userInitiated) {
+                GitGraphLayout.makeRepositoryLayout(
+                    commits: linkedCommits,
+                    hasUncommittedChanges: hasUncommittedChanges
+                )
             }.value
             guard !Task.isCancelled else { return }
             commits = linkedCommits
-            allLayouts = newLayouts
+            allLayouts = graphLayout.commits
+            workingTreeLayout = graphLayout.workingTree
             hasMoreCommits = page.hasMore
         }
         catch { model.errorMessage = error.localizedDescription }
@@ -205,7 +206,10 @@ struct CommitGraphView: View {
     }
 
     private func openBranchActions(_ branch: String) {
-        guard branch != "HEAD", !branch.hasPrefix("origin/") else { return }
+        guard repository.localURL != nil,
+              branch != "HEAD",
+              branch != "Detached HEAD",
+              !branch.hasPrefix("origin/") else { return }
         selectedBranch = branch
         branchDialogPresented = true
     }
@@ -238,39 +242,6 @@ private enum BranchAction {
     }
 }
 
-private enum CommitDateRange: String, CaseIterable, Identifiable {
-    case all = "Any date"
-    case week = "Past week"
-    case month = "Past month"
-    case year = "Past year"
-    var id: Self { self }
-    var cutoff: Date? {
-        let days: Int?
-        switch self {
-        case .all: days = nil
-        case .week: days = 7
-        case .month: days = 31
-        case .year: days = 365
-        }
-        return days.flatMap { Calendar.current.date(byAdding: .day, value: -$0, to: Date()) }
-    }
-}
-
-private struct FilterPicker: View {
-    let title: String
-    let allTitle: String
-    @Binding var selection: String
-    let values: [String]
-
-    var body: some View {
-        Picker(title, selection: $selection) {
-            Text(allTitle).tag("All")
-            ForEach(values, id: \.self) { Text($0).tag($0) }
-        }
-        .frame(maxWidth: 160)
-    }
-}
-
 private struct CommitGraphList: View {
     let layouts: [CommitLayout]
     let graphWidth: CGFloat
@@ -278,6 +249,7 @@ private struct CommitGraphList: View {
     @Binding var hoveredCommitID: String?
     @Binding var selectedCommit: GitCommit?
     let repositoryStatus: RepositoryStatus?
+    let workingTreeLayout: CommitLayout?
     let onBranchClick: (String) -> Void
     let loadedCommitCount: Int
     let hasMoreCommits: Bool
@@ -288,8 +260,44 @@ private struct CommitGraphList: View {
     var body: some View {
         ScrollView(.vertical) {
             LazyVStack(spacing: 0) {
+                if let workingTreeLayout, let repositoryStatus {
+                    HStack(spacing: 0) {
+                        ReferenceColumn {
+                            BranchPill(
+                                name: repositoryStatus.branch,
+                                divergence: repositoryStatus.divergence(for: repositoryStatus.branch),
+                                isCurrent: true,
+                                color: GraphPalette.color(for: workingTreeLayout.lane),
+                                action: onBranchClick
+                            )
+                        }
+
+                        LaneCanvas(
+                            layout: workingTreeLayout,
+                            availableWidth: graphWidth,
+                            totalLaneCount: maxLaneCount,
+                            isWorkingTree: true
+                        )
+                        .frame(width: graphWidth, height: rowHeight)
+
+                        WorkingTreeMetadataRow()
+                        .frame(height: rowHeight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .background(Color.orange.opacity(0.08))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Uncommitted changes on \(repositoryStatus.branch)")
+                }
+
                 ForEach(layouts) { layout in
                     HStack(spacing: 0) {
+                        CommitReferenceColumn(
+                            commit: layout.commit,
+                            color: GraphPalette.color(for: layout.lane),
+                            repositoryStatus: repositoryStatus,
+                            onBranchClick: onBranchClick
+                        )
+
                         LaneCanvas(
                             layout: layout,
                             availableWidth: graphWidth,
@@ -298,9 +306,7 @@ private struct CommitGraphList: View {
                             .frame(width: graphWidth, height: rowHeight)
 
                         CommitMetadataRow(
-                            commit: layout.commit,
-                            repositoryStatus: repositoryStatus,
-                            onBranchClick: onBranchClick
+                            commit: layout.commit
                         )
                             .frame(height: rowHeight)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -319,7 +325,9 @@ private struct CommitGraphList: View {
     }
 
     private let rowHeight: CGFloat = 42
-    private var maxLaneCount: Int { layouts.map(\.laneCount).max() ?? 1 }
+    private var maxLaneCount: Int {
+        max(layouts.map(\.laneCount).max() ?? 1, workingTreeLayout?.laneCount ?? 1)
+    }
 
     @ViewBuilder
     private var loadMoreRow: some View {
@@ -373,12 +381,67 @@ private struct CommitGraphList: View {
     }
 }
 
+private enum GraphPalette {
+    private static let colors: [Color] = [
+        .blue, .purple, .orange, .green, .pink, .teal, .yellow, .indigo
+    ]
+
+    static func color(for lane: Int) -> Color {
+        colors[lane % colors.count]
+    }
+}
+
+private struct ReferenceColumn<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) { content }
+                .padding(.horizontal, 8)
+        }
+        .frame(width: 220, alignment: .leading)
+    }
+}
+
+private struct CommitReferenceColumn: View {
+    let commit: GitCommit
+    let color: Color
+    let repositoryStatus: RepositoryStatus?
+    let onBranchClick: (String) -> Void
+
+    private var branches: [CommitBranchLabel] {
+        CommitReferencePresentation.branchLabels(for: commit.branches)
+    }
+
+    var body: some View {
+        ReferenceColumn {
+            ForEach(branches, id: \.actionName) { branch in
+                BranchPill(
+                    name: branch.name,
+                    divergence: repositoryStatus?.divergence(for: branch.actionName),
+                    isCurrent: commit.isHead && repositoryStatus?.branch == branch.actionName,
+                    includesRemote: branch.includesRemote,
+                    actionName: branch.actionName,
+                    color: color,
+                    action: onBranchClick
+                )
+            }
+            ForEach(commit.tags, id: \.self) { tag in
+                TagPill(name: tag, color: color)
+            }
+        }
+    }
+}
+
 private struct LaneCanvas: View {
     let layout: CommitLayout
     let availableWidth: CGFloat
     let totalLaneCount: Int
-    private let colors: [Color] = [.blue, .purple, .orange, .green, .pink, .teal, .yellow, .indigo]
-
+    var isWorkingTree = false
     var body: some View {
         Canvas { context, size in
             let centerY = size.height / 2
@@ -396,6 +459,19 @@ private struct LaneCanvas: View {
                 context.stroke(incoming, with: .color(color(layout.lane)), lineWidth: 2.5)
             }
 
+            for connection in layout.incomingConnections {
+                var path = Path()
+                let start = CGPoint(x: x(connection.fromLane), y: 0)
+                let end = CGPoint(x: x(connection.toLane), y: centerY)
+                path.move(to: start)
+                path.addCurve(
+                    to: end,
+                    control1: CGPoint(x: start.x, y: size.height * 0.28),
+                    control2: CGPoint(x: end.x, y: centerY - size.height * 0.28)
+                )
+                context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
+            }
+
             for connection in layout.connections {
                 var path = Path()
                 let start = CGPoint(x: x(connection.fromLane), y: centerY)
@@ -409,7 +485,7 @@ private struct LaneCanvas: View {
                 context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
             }
 
-            let radius: CGFloat = layout.commit.isHead ? 7 : 5
+            let radius: CGFloat = isWorkingTree ? 6 : 5
             let rect = CGRect(
                 x: x(layout.lane) - radius,
                 y: centerY - radius,
@@ -421,7 +497,7 @@ private struct LaneCanvas: View {
                 context.stroke(Path(ellipseIn: rect.insetBy(dx: -3, dy: -3)), with: .color(color(layout.lane)), lineWidth: 2)
             }
         }
-        .accessibilityLabel("Commit graph lane \(layout.lane + 1)")
+        .accessibilityLabel("\(isWorkingTree ? "Working tree" : "Commit") graph lane \(layout.lane + 1)")
     }
 
     private func x(_ lane: Int) -> CGFloat {
@@ -431,45 +507,48 @@ private struct LaneCanvas: View {
         guard totalLaneCount > 1 else { return 18 }
         return min(18, max(5, (availableWidth - 28) / CGFloat(totalLaneCount - 1)))
     }
-    private func color(_ lane: Int) -> Color { colors[lane % colors.count] }
+    private func color(_ lane: Int) -> Color { GraphPalette.color(for: lane) }
+}
+
+private struct WorkingTreeMetadataRow: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Label("Uncommitted changes", systemImage: "pencil.and.list.clipboard")
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+            Spacer(minLength: 8)
+        }
+        .font(.body)
+        .padding(.trailing, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 private struct CommitMetadataRow: View {
     let commit: GitCommit
-    let repositoryStatus: RepositoryStatus?
-    let onBranchClick: (String) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             Text(commit.message)
-                .fontWeight(commit.isHead ? .semibold : .regular)
+                .font(.body)
+                .fontWeight(.regular)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(-1)
-            ForEach(commit.branches, id: \.self) {
-                BranchPill(
-                    name: $0,
-                    divergence: repositoryStatus?.divergence(for: $0),
-                    action: onBranchClick
-                )
-            }
-            ForEach(commit.tags, id: \.self) { TagPill(name: $0) }
             Spacer(minLength: 8)
             Text(commit.author)
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(2)
-            Text(commit.timestamp, style: .relative)
+            Text(CommitAgeFormatter.string(for: commit.timestamp))
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(2)
-            Text(commit.abbreviatedID)
-                .monospaced()
-                .fixedSize(horizontal: true, vertical: false)
             if commit.parents.count > 1 {
                 Image(systemName: "arrow.triangle.merge")
                     .help("Merge commit")
             }
         }
-        .font(.caption)
+        .font(.body)
         .foregroundStyle(.secondary)
         .padding(.trailing, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -479,11 +558,22 @@ private struct CommitMetadataRow: View {
 private struct BranchPill: View {
     let name: String
     let divergence: BranchDivergence?
+    var isCurrent = false
+    var includesRemote = false
+    var actionName: String?
+    var color: Color = .blue
     let action: (String) -> Void
     var body: some View {
-        Button { action(name) } label: {
+        Button { action(actionName ?? name) } label: {
             HStack(spacing: 4) {
-                Label(name, systemImage: name == "HEAD" ? "location.fill" : "arrow.triangle.branch")
+                Label(
+                    name,
+                    systemImage: isCurrent || name == "HEAD" ? "location.fill" : "arrow.triangle.branch"
+                )
+                if includesRemote {
+                    Image(systemName: "icloud.fill")
+                        .help("Local and remote branch")
+                }
                 if let divergence {
                     if divergence.ahead > 0 {
                         Text("↑\(divergence.ahead)")
@@ -497,8 +587,8 @@ private struct BranchPill: View {
             }
                 .font(.caption2.bold())
                 .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(Color.blue.opacity(0.14), in: Capsule())
-                .foregroundStyle(.blue)
+                .background(color.opacity(0.14), in: Capsule())
+                .foregroundStyle(color)
         }
         .buttonStyle(.plain)
     }
@@ -531,12 +621,13 @@ private struct ComparisonView: View {
 
 private struct TagPill: View {
     let name: String
+    var color: Color = .orange
     var body: some View {
         Label(name, systemImage: "tag.fill")
             .font(.caption2.bold())
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(Color.orange.opacity(0.14), in: Capsule())
-            .foregroundStyle(.orange)
+            .background(color.opacity(0.14), in: Capsule())
+            .foregroundStyle(color)
     }
 }
 
@@ -585,8 +676,17 @@ private struct CommitDetailsView: View {
             }
         }
         .task {
-            guard let url = repository.localURL else { return }
-            do { details = try await model.git.details(for: commit, at: url) }
+            do {
+                if let url = repository.localURL {
+                    details = try await model.git.details(for: commit, at: url)
+                } else {
+                    details = try await model.github.commitDetails(
+                        fullName: repository.fullName,
+                        commit: commit,
+                        token: model.githubToken
+                    )
+                }
+            }
             catch { model.errorMessage = error.localizedDescription }
         }
     }

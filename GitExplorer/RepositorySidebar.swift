@@ -2,22 +2,38 @@ import SwiftUI
 
 struct RepositorySidebar: View {
     @EnvironmentObject private var model: AppModel
+    @State private var collapsedOwners: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
             controls
+            repositoryTools
             List(selection: $model.selectedRepositoryID) {
                 ForEach(groupedOwners, id: \.owner) { group in
-                    Section(group.owner) {
-                        ForEach(group.repositories) { repository in
-                            RepositoryRow(repository: repository)
-                                .tag(repository.id)
+                    DisclosureGroup(
+                        isExpanded: ownerExpansionBinding(for: group.owner),
+                        content: {
+                            ForEach(group.repositories) { repository in
+                                RepositoryRow(repository: repository)
+                                    .tag(repository.id)
+                            }
+                        },
+                        label: {
+                            Text(group.owner)
+                                .font(.headline)
                         }
-                    }
+                    )
+                    .accessibilityLabel(group.owner)
+                    .accessibilityHint("Collapse or expand this organization")
                 }
             }
             .overlay {
-                if model.visibleRepositories.isEmpty {
+                if model.isLoading {
+                    PaneLoadingView(
+                        model.repositories.isEmpty ? "Loading repositories…" : "Refreshing repositories…"
+                    )
+                    .background(.regularMaterial)
+                } else if model.visibleRepositories.isEmpty {
                     if model.repositories.isEmpty {
                         ContentUnavailableView(
                             "No Repositories",
@@ -30,7 +46,6 @@ struct RepositorySidebar: View {
                 }
             }
         }
-        .searchable(text: $model.searchText, prompt: "Find repositories")
         .navigationTitle("Repositories")
     }
 
@@ -43,13 +58,45 @@ struct RepositorySidebar: View {
             .labelsHidden()
 
             Picker("Repository scope", selection: $model.repositoryFilter) {
-                ForEach(RepositoryFilter.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(RepositoryFilter.allCases) { Text($0.rawValue.capitalized).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: .infinity)
         }
         .padding(10)
+    }
+
+    private var repositoryTools: some View {
+        HStack(spacing: 8) {
+            TextField("Search repositories", text: $model.searchText)
+                .textFieldStyle(.roundedBorder)
+
+            Button {
+                Task { await model.refresh() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.isLoading)
+            .help("Refresh repositories")
+            .accessibilityLabel("Refresh repositories")
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    private func ownerExpansionBinding(for owner: String) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedOwners.contains(owner) },
+            set: { isExpanded in
+                if isExpanded {
+                    collapsedOwners.remove(owner)
+                } else {
+                    collapsedOwners.insert(owner)
+                }
+            }
+        )
     }
 
     private var groupedOwners: [(owner: String, repositories: [Repository])] {
@@ -67,20 +114,12 @@ private struct RepositoryRow: View {
             Image(systemName: repository.isLocal ? "externaldrive.fill" : "cloud.fill")
                 .foregroundStyle(repository.isLocal ? .green : .secondary)
                 .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(repository.name)
-                    if repository.isPrivate {
-                        Image(systemName: "lock.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if let description = repository.description, !description.isEmpty {
-                    Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            HStack {
+                Text(repository.name)
+                if repository.isPrivate {
+                    Image(systemName: "lock.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.gray.opacity(0.55))
                 }
             }
         }

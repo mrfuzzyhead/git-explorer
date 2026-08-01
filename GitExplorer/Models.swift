@@ -47,8 +47,14 @@ struct CommitLayout: Identifiable, Hashable {
     let lane: Int
     let laneCount: Int
     let connections: [CommitConnection]
+    let incomingConnections: [CommitConnection]
     let passThroughLanes: [Int]
     let hasIncomingConnection: Bool
+}
+
+struct RepositoryGraphLayout {
+    let workingTree: CommitLayout?
+    let commits: [CommitLayout]
 }
 
 struct RepositoryStatus: Equatable {
@@ -93,6 +99,19 @@ struct CommitDetails {
     let commit: GitCommit
     let changedFiles: [String]
     let diff: String
+}
+
+struct RemoteFileEntry: Identifiable, Hashable {
+    enum Kind: String {
+        case file, directory
+    }
+
+    var id: String { path }
+    let name: String
+    let path: String
+    let kind: Kind
+    let size: Int
+    let webURL: URL?
 }
 
 enum RepositoryFilter: String, CaseIterable, Identifiable {

@@ -73,18 +73,21 @@ actor GitService {
             let remote = try? run(["-C", url.path, "remote", "get-url", "origin"])
             let fullName = remote.flatMap(Self.repositoryName(fromRemote:)) ?? url.lastPathComponent
             let parts = fullName.split(separator: "/", maxSplits: 1).map(String.init)
+            let branch = try? run(["-C", url.path, "branch", "--show-current"])
+            let latestCommit = try? run(["-C", url.path, "log", "-1", "--format=%cI"])
             repositories.append(Repository(
                 id: fullName.lowercased(),
                 name: parts.last ?? url.lastPathComponent,
                 fullName: fullName,
                 owner: parts.count > 1 ? parts[0] : "Local",
                 description: nil,
-                webURL: remote.flatMap(URL.init(string:)),
+                webURL: Self.githubWebURL(fullName: fullName, remote: remote),
                 cloneURL: remote.flatMap(URL.init(string:)),
-                defaultBranch: nil,
+                defaultBranch: branch?.isEmpty == false ? branch : nil,
                 isPrivate: false,
                 localURL: url,
-                updatedAt: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                updatedAt: latestCommit.flatMap(Self.gitDate) ??
+                    (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             ))
         }
         return repositories.sorted {
@@ -109,6 +112,24 @@ actor GitService {
             }
         }
         return result
+    }
+
+    func fetch(at repository: URL) throws {
+        guard try hasRemotes(at: repository) else { return }
+        _ = try run(["-C", repository.path, "fetch", "--all", "--prune"])
+    }
+
+    func pull(at repository: URL) throws {
+        _ = try run(["-C", repository.path, "pull", "--ff-only"])
+    }
+
+    func push(at repository: URL) throws {
+        _ = try run(["-C", repository.path, "push"])
+    }
+
+    func sync(at repository: URL) throws {
+        try pull(at: repository)
+        try push(at: repository)
     }
 
     func commits(at repository: URL, limit: Int = 20_000, offset: Int = 0) throws -> [GitCommit] {
@@ -199,6 +220,10 @@ actor GitService {
         try run(["-C", repository.path, "diff", "--stat", "--patch", "\(branch)...HEAD"])
     }
 
+    private func hasRemotes(at repository: URL) throws -> Bool {
+        try !run(["-C", repository.path, "remote"]).isEmpty
+    }
+
     private func parseCommit(_ record: String) -> GitCommit? {
         let fields = record.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: fieldSeparator)
@@ -234,7 +259,9 @@ actor GitService {
         let stderr = Pipe()
         process.executableURL = executableURL
         process.arguments = arguments
-        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(["GIT_TERMINAL_PROMPT": "0"]) { current, _ in current }
+            .merging(environment) { _, new in new }
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
@@ -273,6 +300,17 @@ actor GitService {
             return String(value[value.index(after: colon)...])
         }
         return nil
+    }
+
+    private static func githubWebURL(fullName: String, remote: String?) -> URL? {
+        guard remote.flatMap(repositoryName(fromRemote:)) != nil else { return nil }
+        return URL(string: "https://github.com/\(fullName)")
+    }
+
+    private static func gitDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 }
 

@@ -2,6 +2,52 @@ import XCTest
 @testable import GitExplorer
 
 final class GitGraphLayoutTests: XCTestCase {
+    func testOriginHeadReferenceIsHidden() {
+        XCTAssertEqual(
+            CommitReferencePresentation.branchLabels(
+                for: ["origin/HEAD", "master", "origin/master"]
+            ),
+            [CommitBranchLabel(name: "master", actionName: "master", includesRemote: true)]
+        )
+    }
+
+    func testLocalAndOriginBranchCollapseIntoOneLabel() {
+        let labels = CommitReferencePresentation.branchLabels(
+            for: ["main", "origin/main", "feature"]
+        )
+
+        XCTAssertEqual(labels, [
+            CommitBranchLabel(name: "main", actionName: "main", includesRemote: true),
+            CommitBranchLabel(name: "feature", actionName: "feature", includesRemote: false)
+        ])
+    }
+
+    func testRemoteOnlyBranchKeepsItsFullName() {
+        XCTAssertEqual(
+            CommitReferencePresentation.branchLabels(for: ["origin/release"]),
+            [CommitBranchLabel(
+                name: "origin/release",
+                actionName: "origin/release",
+                includesRemote: false
+            )]
+        )
+    }
+
+    func testCommitAgeFormattingUsesOneLargestUnitThenCalendarDate() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-5 * 60), relativeTo: now), "5 mins")
+        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-3 * 3_600), relativeTo: now), "3 hrs")
+        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-2 * 86_400), relativeTo: now), "2 days")
+        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-7 * 86_400), relativeTo: now), "1 wk")
+
+        let oldDate = Calendar(identifier: .gregorian).date(
+            from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 7, day: 2)
+        )!
+        let muchLater = oldDate.addingTimeInterval(29 * 86_400)
+        XCTAssertEqual(CommitAgeFormatter.string(for: oldDate, relativeTo: muchLater), "2 Jul 26")
+    }
+
     func testHoverEnterSelectsCommit() {
         let target = hoverTarget("new", surface: .metadata)
         XCTAssertEqual(
@@ -90,7 +136,7 @@ final class GitGraphLayoutTests: XCTestCase {
         XCTAssertEqual(first[2].lane, 0)
     }
 
-    func testBranchJoiningExistingLaneKeepsItsOwnColor() {
+    func testBranchJoiningExistingLaneStaysSeparateUntilParentNode() {
         let commits = [
             commit("main", parents: ["base"]),
             commit("branch", parents: ["base"]),
@@ -102,7 +148,30 @@ final class GitGraphLayoutTests: XCTestCase {
         XCTAssertEqual(result[1].lane, 1)
         XCTAssertEqual(
             result[1].connections,
+            [CommitConnection(fromLane: 1, toLane: 1, colorLane: 1)]
+        )
+        XCTAssertEqual(
+            result[2].incomingConnections,
             [CommitConnection(fromLane: 1, toLane: 0, colorLane: 1)]
+        )
+    }
+
+    func testBranchPassesThroughInterveningRowsBeforeJoiningParent() {
+        let commits = [
+            commit("main-tip", parents: ["main-middle"]),
+            commit("branch-tip", parents: ["base"]),
+            commit("main-middle", parents: ["base"]),
+            commit("base", parents: [])
+        ]
+
+        let result = GitGraphLayout.make(commits: commits)
+
+        let branchLane = result[1].lane
+        XCTAssertEqual(result[1].connections.first?.toLane, branchLane)
+        XCTAssertTrue(result[2].passThroughLanes.contains(branchLane))
+        XCTAssertEqual(
+            result[3].incomingConnections,
+            [CommitConnection(fromLane: branchLane, toLane: 0, colorLane: branchLane)]
         )
     }
 
@@ -123,6 +192,37 @@ final class GitGraphLayoutTests: XCTestCase {
         let layout = GitGraphLayout.make(commits: [source])
         XCTAssertEqual(layout.first?.commit, source)
         XCTAssertEqual(layout.first?.lane, 0)
+    }
+
+    func testWorkingTreeRowConnectsToHead() throws {
+        let commits = [
+            commit("other-tip", parents: ["base"], branches: ["other"]),
+            commit("head", parents: ["base"], branches: ["main"], isHead: true),
+            commit("base", parents: [])
+        ]
+
+        let result = GitGraphLayout.makeRepositoryLayout(
+            commits: commits,
+            hasUncommittedChanges: true
+        )
+        let workingTree = try XCTUnwrap(result.workingTree)
+
+        XCTAssertEqual(workingTree.connections.map(\.toLane), [0])
+        XCTAssertTrue(result.commits[0].passThroughLanes.contains(0))
+        XCTAssertTrue(result.commits[1].hasIncomingConnection)
+        XCTAssertEqual(result.commits[1].commit.id, "head")
+    }
+
+    func testCleanWorkingTreeDoesNotAddRow() {
+        let commits = [commit("head", parents: [], isHead: true)]
+
+        let result = GitGraphLayout.makeRepositoryLayout(
+            commits: commits,
+            hasUncommittedChanges: false
+        )
+
+        XCTAssertNil(result.workingTree)
+        XCTAssertEqual(result.commits.map(\.commit), commits)
     }
 
     func testTenThousandCommitLinearHistoryUsesOneLane() {

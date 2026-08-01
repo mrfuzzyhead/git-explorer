@@ -29,6 +29,37 @@ actor GitHubService {
     }
 
     private struct APIOrg: Decodable { let login: String }
+    private struct APICommit: Decodable {
+        let sha: String
+        let commit: Metadata
+        let parents: [Parent]
+
+        struct Metadata: Decodable {
+            let author: Author?
+            let committer: Author?
+            let message: String
+        }
+        struct Author: Decodable {
+            let name: String
+            let date: Date
+        }
+        struct Parent: Decodable { let sha: String }
+    }
+    private struct APICommitDetails: Decodable {
+        let files: [File]?
+        struct File: Decodable {
+            let filename: String
+            let status: String
+            let patch: String?
+        }
+    }
+    private struct APIContent: Decodable {
+        let name: String
+        let path: String
+        let type: String
+        let size: Int
+        let html_url: URL?
+    }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -86,8 +117,104 @@ actor GitHubService {
         }
     }
 
-    private func request(path: String, token: String, accept: String = "application/vnd.github+json") async throws -> Data {
-        guard let url = URL(string: "https://api.github.com\(path)") else { throw GitHubError.invalidResponse }
+    func commitPage(
+        fullName: String,
+        branch: String?,
+        offset: Int,
+        limit: Int,
+        token: String
+    ) async throws -> GitCommitPage {
+        let pageSize = min(max(limit, 1), 100)
+        let page = offset / pageSize + 1
+        var query = [
+            URLQueryItem(name: "per_page", value: String(pageSize)),
+            URLQueryItem(name: "page", value: String(page))
+        ]
+        if let branch, !branch.isEmpty {
+            query.append(URLQueryItem(name: "sha", value: branch))
+        }
+        let data = try await request(path: "/repos/\(fullName)/commits", query: query, token: token)
+        let values = try decoder.decode([APICommit].self, from: data)
+        let branchName = branch ?? "HEAD"
+        var commits = values.enumerated().map { index, value in
+            let author = value.commit.author ?? value.commit.committer
+            return GitCommit(
+                id: value.sha,
+                parents: value.parents.map(\.sha),
+                author: author?.name ?? "Unknown",
+                timestamp: author?.date ?? .distantPast,
+                message: value.commit.message.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? value.commit.message,
+                branches: offset == 0 && index == 0 ? [branchName] : [],
+                tags: [],
+                isHead: offset == 0 && index == 0
+            )
+        }
+        var children: [String: [String]] = [:]
+        for commit in commits {
+            for parent in commit.parents { children[parent, default: []].append(commit.id) }
+        }
+        for index in commits.indices { commits[index].children = children[commits[index].id] ?? [] }
+        return GitCommitPage(commits: commits, hasMore: values.count == pageSize)
+    }
+
+    func commitDetails(fullName: String, commit: GitCommit, token: String) async throws -> CommitDetails {
+        let data = try await request(path: "/repos/\(fullName)/commits/\(commit.id)", token: token)
+        let value = try decoder.decode(APICommitDetails.self, from: data)
+        let files = value.files ?? []
+        let changedFiles = files.map { "\($0.status)\t\($0.filename)" }
+        let diff = files.map { file in
+            let header = "--- \(file.filename)\n+++ \(file.filename)"
+            return [header, file.patch ?? "Binary file or patch unavailable."].joined(separator: "\n")
+        }.joined(separator: "\n\n")
+        return CommitDetails(commit: commit, changedFiles: changedFiles, diff: diff)
+    }
+
+    func files(fullName: String, path: String, reference: String?, token: String) async throws -> [RemoteFileEntry] {
+        let suffix = path.isEmpty ? "" : "/\(Self.encodedPath(path))"
+        let query = reference.map { [URLQueryItem(name: "ref", value: $0)] } ?? []
+        let data = try await request(path: "/repos/\(fullName)/contents\(suffix)", query: query, token: token)
+        let values = try decoder.decode([APIContent].self, from: data)
+        return values.compactMap { value in
+            guard value.type == "file" || value.type == "dir" else { return nil }
+            return RemoteFileEntry(
+                name: value.name,
+                path: value.path,
+                kind: value.type == "dir" ? .directory : .file,
+                size: value.size,
+                webURL: value.html_url
+            )
+        }.sorted {
+            if $0.kind != $1.kind { return $0.kind == .directory }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    func fileContents(fullName: String, path: String, reference: String?, token: String) async throws -> String {
+        let encodedPath = Self.encodedPath(path)
+        let query = reference.map { [URLQueryItem(name: "ref", value: $0)] } ?? []
+        let data = try await request(
+            path: "/repos/\(fullName)/contents/\(encodedPath)",
+            query: query,
+            token: token,
+            accept: "application/vnd.github.raw+json"
+        )
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw GitHubError.invalidResponse
+        }
+        return value
+    }
+
+    private func request(
+        path: String,
+        query: [URLQueryItem] = [],
+        token: String,
+        accept: String = "application/vnd.github+json"
+    ) async throws -> Data {
+        guard var components = URLComponents(string: "https://api.github.com\(path)") else {
+            throw GitHubError.invalidResponse
+        }
+        if !query.isEmpty { components.queryItems = query }
+        guard let url = components.url else { throw GitHubError.invalidResponse }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(accept, forHTTPHeaderField: "Accept")
@@ -98,6 +225,13 @@ actor GitHubService {
             throw GitHubError.requestFailed(http.statusCode, String(data: data, encoding: .utf8) ?? "Unknown error")
         }
         return data
+    }
+
+    private static func encodedPath(_ path: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        return path.split(separator: "/", omittingEmptySubsequences: false)
+            .map { String($0).addingPercentEncoding(withAllowedCharacters: allowed) ?? String($0) }
+            .joined(separator: "/")
     }
 }
 
