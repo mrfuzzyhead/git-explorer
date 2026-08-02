@@ -51,10 +51,6 @@ struct CommitDetailsPanel: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                    Text(commit.id)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
                 }
             }
             .padding(20)
@@ -79,10 +75,10 @@ struct CommitDetailsPanel: View {
                             if let selectedFile {
                                 CommitDiffView(diff: details.fileDiffs[selectedFile] ?? "")
                             } else {
-                                ContentUnavailableView(
-                                    "Select a file",
+                                CommitDetailsEmptyState(
+                                    title: "Select a file",
                                     systemImage: "doc.text.magnifyingglass",
-                                    description: Text("Choose a changed file to view its diff.")
+                                    description: "Choose a changed file to view its diff."
                                 )
                             }
                         }
@@ -194,10 +190,10 @@ struct CommitDetailsPanel: View {
             Divider()
 
             if files.isEmpty {
-                ContentUnavailableView(
-                    "No files changed",
+                CommitDetailsEmptyState(
+                    title: "No files changed",
                     systemImage: "doc",
-                    description: Text("This commit does not contain file changes.")
+                    description: "This commit does not contain file changes."
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -221,6 +217,29 @@ struct CommitDetailsPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct CommitDetailsEmptyState: View {
+    let title: String
+    let systemImage: String
+    let description: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.title2)
+
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+
+            Text(description)
+                .font(.caption)
+        }
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
 
@@ -256,24 +275,18 @@ private struct ChangedFileRow: View {
 
     var body: some View {
         let presentation = change.presentation
-        HStack(alignment: .top, spacing: 8) {
+        HStack(spacing: 8) {
             Image(systemName: presentation.icon)
                 .font(.subheadline)
                 .foregroundStyle(presentation.color)
                 .frame(width: 14)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(change.path)
-                    .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-
-                Text(presentation.label)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(change.path)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
