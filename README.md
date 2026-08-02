@@ -29,9 +29,9 @@ The app is written in SwiftUI and targets the current development Mac:
 - Renders the repository README when one exists.
 - Browses the default branch's commit graph, commit details, folders, and text
   files directly through the GitHub API without requiring a clone.
-- Shows privacy, default branch, relative update time, and HTTPS clone URL.
-- Opens the repository on GitHub.
-- Clones into the configured local repositories folder.
+- Shows privacy, default branch, compact update time, and HTTPS clone URL.
+- Prompts for a clone destination, defaulting to the configured local repositories folder.
+- Reports clone and Git action progress and results through reusable top-right toasts.
 - Authenticates private clones without putting the personal access token in the
   command-line arguments.
 
@@ -53,7 +53,6 @@ The app is written in SwiftUI and targets the current development Mac:
 - Keeps the graph Canvas and virtualized metadata list in independent,
   vertically synchronized layers.
 - Reuses completed lanes and preserves active lanes where possible.
-- Supports instant search across SHA, message, author, branch, and tag.
 - Filters by branch, author, tag, and date.
 - Highlights a commit's ancestry on hover.
 - Opens commit details with full SHA, parents, children, changed files, and
@@ -222,7 +221,8 @@ project.yml
   `net.fuzzyhead.git`.
 - The token is sent only to `api.github.com` and, during authenticated private
   clones, to the repository's HTTPS Git endpoint through a temporary Git
-  `http.extraHeader` environment configuration.
+  `http.extraHeader` environment configuration using GitHub's Basic token
+  authentication format.
 - Tokens are not embedded in clone URLs or Git command arguments.
 - `.env` is development-only and ignored by source control.
 - Use the narrowest repository access and read-only permissions that meet your
