@@ -226,6 +226,7 @@ struct MarkdownDocument: Equatable {
 struct MarkdownPreviewView: View {
     let markdown: String
     var baseURL: URL?
+    var maximumContentWidth: CGFloat? = 860
 
     private var document: MarkdownDocument {
         MarkdownDocument(markdown: markdown)
@@ -239,11 +240,15 @@ struct MarkdownPreviewView: View {
                 }
             }
             .textSelection(.enabled)
-            .frame(maxWidth: 860, alignment: .leading)
+            .frame(maxWidth: maximumContentWidth ?? .infinity, alignment: .leading)
             .padding(.horizontal, 32)
             .padding(.vertical, 28)
-            .frame(maxWidth: .infinity)
+            .frame(
+                maxWidth: .infinity,
+                alignment: maximumContentWidth == nil ? .leading : .center
+            )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 

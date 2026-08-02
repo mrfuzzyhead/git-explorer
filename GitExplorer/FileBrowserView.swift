@@ -23,9 +23,11 @@ private struct FileExplorerWorkspace: View {
     @State private var entriesByDirectory: [URL: [URL]] = [:]
     @State private var loadingDirectories: Set<URL> = []
     @State private var directoryErrors: [URL: String] = [:]
-    @State private var treePaneWidth: CGFloat = 280
+    @State private var treePaneWidth: CGFloat
     @GestureState private var treePaneDragOffset: CGFloat = 0
 
+    private static let treePaneWidthDefaultsKey = "fileExplorer.treePaneWidth"
+    private static let defaultTreePaneWidth: CGFloat = 280
     private let minimumTreePaneWidth: CGFloat = 220
     private let maximumTreePaneWidth: CGFloat = 420
     private let minimumPreviewWidth: CGFloat = 400
@@ -35,6 +37,7 @@ private struct FileExplorerWorkspace: View {
         self.root = root
         _selection = State(initialValue: root)
         _expandedDirectories = State(initialValue: Set([root]))
+        _treePaneWidth = State(initialValue: Self.savedTreePaneWidth)
     }
 
     var body: some View {
@@ -118,18 +121,35 @@ private struct FileExplorerWorkspace: View {
             }
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 0)
-                    .updating($treePaneDragOffset) { value, offset, _ in
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .updating($treePaneDragOffset) { value, offset, transaction in
+                        transaction.animation = nil
                         offset = value.translation.width
                     }
                     .onEnded { value in
-                        treePaneWidth = clampedTreePaneWidth(
+                        let proposedWidth = clampedTreePaneWidth(
                             treePaneWidth + value.translation.width,
                             containerWidth: containerWidth
+                        )
+                        var transaction = Transaction()
+                        transaction.animation = nil
+                        withTransaction(transaction) {
+                            treePaneWidth = proposedWidth
+                        }
+                        UserDefaults.standard.set(
+                            Double(treePaneWidth),
+                            forKey: Self.treePaneWidthDefaultsKey
                         )
                     }
             )
             .help("Drag to resize the folder pane")
+    }
+
+    private static var savedTreePaneWidth: CGFloat {
+        guard UserDefaults.standard.object(forKey: treePaneWidthDefaultsKey) != nil else {
+            return defaultTreePaneWidth
+        }
+        return CGFloat(UserDefaults.standard.double(forKey: treePaneWidthDefaultsKey))
     }
 
     @MainActor
@@ -150,7 +170,7 @@ private struct FileExplorerWorkspace: View {
             entriesByDirectory[directory] = try await model.git.listFiles(at: directory)
         } catch {
             directoryErrors[directory] = error.localizedDescription
-            model.errorMessage = error.localizedDescription
+            model.showError(error.localizedDescription, title: "Couldn’t load files")
         }
         loadingDirectories.remove(directory)
     }
@@ -166,31 +186,35 @@ private struct ExplorerTreePane: View {
     let onLoadDirectory: (URL) -> Void
 
     var body: some View {
-        ScrollViewReader { proxy in
-            List {
-                ExplorerTreeNode(
-                    url: root,
-                    selection: $selection,
-                    expandedDirectories: $expandedDirectories,
-                    entriesByDirectory: entriesByDirectory,
-                    loadingDirectories: loadingDirectories,
-                    directoryErrors: directoryErrors,
-                    onLoadDirectory: onLoadDirectory,
-                    isRepositoryRoot: true
-                )
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(Color.primary.opacity(0.045))
-            .onChange(of: selection) { _, selection in
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(selection, anchor: .center)
+        ZStack {
+            Color.accentColor.opacity(0.08)
+
+            ScrollViewReader { proxy in
+                List {
+                    ExplorerTreeNode(
+                        url: root,
+                        selection: $selection,
+                        expandedDirectories: $expandedDirectories,
+                        entriesByDirectory: entriesByDirectory,
+                        loadingDirectories: loadingDirectories,
+                        directoryErrors: directoryErrors,
+                        onLoadDirectory: onLoadDirectory,
+                        isRepositoryRoot: true
+                    )
                 }
-            }
-            .overlay {
-                if loadingDirectories.contains(root), entriesByDirectory[root] == nil {
-                    PaneLoadingView("Loading files…")
-                        .background(.regularMaterial)
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(.clear)
+                .onChange(of: selection) { _, selection in
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo(selection, anchor: .center)
+                    }
+                }
+                .overlay {
+                    if loadingDirectories.contains(root), entriesByDirectory[root] == nil {
+                        PaneLoadingView("Loading files…")
+                            .background(.regularMaterial)
+                    }
                 }
             }
         }
@@ -422,30 +446,45 @@ private struct FilePreview: View {
     @ViewBuilder
     private func preview(_ contents: String) -> some View {
         if MarkdownDocument.isMarkdownFile(url) {
-            MarkdownPreviewView(markdown: contents, baseURL: url.deletingLastPathComponent())
+            MarkdownPreviewView(
+                markdown: contents,
+                baseURL: url.deletingLastPathComponent(),
+                maximumContentWidth: nil
+            )
         } else {
-            GeometryReader { geometry in
-                ScrollView([.vertical, .horizontal]) {
-                    Group {
-                        if let language = SourceLanguage(url: url) {
-                            Text(SourceSyntaxHighlighter.highlight(contents, as: language))
-                        } else {
-                            Text(contents)
-                        }
-                    }
-                    .font(.system(.callout, design: .monospaced))
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(16)
-                    .frame(
-                        minWidth: geometry.size.width,
-                        minHeight: geometry.size.height,
-                        alignment: .topLeading
-                    )
-                }
-            }
+            TextFilePreview(contents: contents, url: url)
         }
+    }
+}
+
+private struct TextFilePreview: View {
+    let contents: String
+    let url: URL
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView([.vertical, .horizontal]) {
+                Group {
+                    if let language = SourceLanguage(url: url) {
+                        Text(SourceSyntaxHighlighter.highlight(contents, as: language))
+                    } else {
+                        Text(contents)
+                    }
+                }
+                .font(.system(.callout, design: .monospaced))
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(16)
+                .frame(
+                    minWidth: geometry.size.width,
+                    minHeight: geometry.size.height,
+                    alignment: .topLeading
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -559,7 +598,7 @@ private struct RemoteFileExplorerWorkspace: View {
             )
         } catch {
             errors[path] = error.localizedDescription
-            model.errorMessage = error.localizedDescription
+            model.showError(error.localizedDescription, title: "Couldn’t load files")
         }
         loadingPaths.remove(path)
     }
@@ -700,21 +739,13 @@ private struct RemoteFilePreview: View {
 
             if let contents {
                 if MarkdownDocument.isMarkdownFile(syntheticURL) {
-                    MarkdownPreviewView(markdown: contents, baseURL: entry.webURL)
+                    MarkdownPreviewView(
+                        markdown: contents,
+                        baseURL: entry.webURL,
+                        maximumContentWidth: nil
+                    )
                 } else {
-                    ScrollView([.vertical, .horizontal]) {
-                        Group {
-                            if let language = SourceLanguage(url: syntheticURL) {
-                                Text(SourceSyntaxHighlighter.highlight(contents, as: language))
-                            } else {
-                                Text(contents)
-                            }
-                        }
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
+                    TextFilePreview(contents: contents, url: syntheticURL)
                 }
             } else if let errorMessage {
                 ContentUnavailableView("Preview unavailable", systemImage: "doc.badge.ellipsis", description: Text(errorMessage))
