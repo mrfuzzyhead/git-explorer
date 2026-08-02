@@ -186,10 +186,49 @@ actor GitService {
         let files = try run([
             "-C", repository.path, "diff-tree", "--no-commit-id", "--name-status", "-r", commit.id
         ]).split(separator: "\n").map(String.init)
-        let diff = try run([
-            "-C", repository.path, "show", "--format=fuller", "--stat", "--patch", "--no-ext-diff", commit.id
-        ])
-        return CommitDetails(commit: commit, changedFiles: files, diff: diff)
+        var fileDiffs: [String: String] = [:]
+        for file in files {
+            guard let path = file.split(separator: "\t", omittingEmptySubsequences: false).last else {
+                continue
+            }
+            fileDiffs[file] = try run([
+                "-C", repository.path, "show", "--format=", "--patch", "--no-ext-diff",
+                commit.id, "--", String(path)
+            ])
+        }
+        return CommitDetails(commit: commit, changedFiles: files, fileDiffs: fileDiffs)
+    }
+
+    func workingTreeDetails(for commit: GitCommit, at repository: URL) throws -> CommitDetails {
+        let rawStatus = try run([
+            "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+        ], trimmingOutput: false)
+        let changes = Self.parseWorkingTreeChanges(rawStatus)
+        var changedFiles: [String] = []
+        var fileDiffs: [String: String] = [:]
+
+        for change in changes {
+            let key = "\(change.status)\t\(change.path)"
+            changedFiles.append(key)
+
+            if change.isUntracked {
+                fileDiffs[key] = try run(
+                    [
+                        "-C", repository.path, "diff", "--no-index", "--no-ext-diff",
+                        "--", "/dev/null", change.path
+                    ],
+                    allowedTerminationStatuses: [0, 1]
+                )
+            } else {
+                var paths = [change.path]
+                if let originalPath = change.originalPath { paths.append(originalPath) }
+                fileDiffs[key] = try run([
+                    "-C", repository.path, "diff", "HEAD", "--patch", "--no-ext-diff", "--"
+                ] + paths)
+            }
+        }
+
+        return CommitDetails(commit: commit, changedFiles: changedFiles, fileDiffs: fileDiffs)
     }
 
     func clone(remote: URL, into directory: URL, token: String?) throws {
@@ -198,10 +237,15 @@ actor GitService {
             environment = [
                 "GIT_CONFIG_COUNT": "1",
                 "GIT_CONFIG_KEY_0": "http.extraHeader",
-                "GIT_CONFIG_VALUE_0": "Authorization: Bearer \(token)"
+                "GIT_CONFIG_VALUE_0": Self.gitHTTPAuthorizationHeader(token: token)
             ]
         }
         _ = try run(["clone", remote.absoluteString, directory.path], environment: environment)
+    }
+
+    static func gitHTTPAuthorizationHeader(token: String) -> String {
+        let credentials = Data("x-access-token:\(token)".utf8).base64EncodedString()
+        return "Authorization: Basic \(credentials)"
     }
 
     func checkout(branch: String, at repository: URL) throws {
@@ -252,7 +296,12 @@ actor GitService {
         )
     }
 
-    private func run(_ arguments: [String], environment: [String: String] = [:]) throws -> String {
+    private func run(
+        _ arguments: [String],
+        environment: [String: String] = [:],
+        allowedTerminationStatuses: Set<Int32> = [0],
+        trimmingOutput: Bool = true
+    ) throws -> String {
         guard let executableURL else { throw GitServiceError.missing }
         let process = Process()
         let stdout = Pipe()
@@ -281,13 +330,50 @@ actor GitService {
         process.waitUntilExit()
         readers.wait()
         let (output, error) = outputReader.result
-        guard process.terminationStatus == 0 else {
+        guard allowedTerminationStatuses.contains(process.terminationStatus) else {
             throw GitServiceError.failed(
                 arguments: arguments,
                 message: String(decoding: error, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
-        return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = String(decoding: output, as: UTF8.self)
+        return trimmingOutput ? value.trimmingCharacters(in: .whitespacesAndNewlines) : value
+    }
+
+    private static func parseWorkingTreeChanges(_ value: String) -> [WorkingTreeChange] {
+        let records = value.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+        var changes: [WorkingTreeChange] = []
+        var index = 0
+
+        while index < records.count {
+            let record = records[index]
+            guard record.count >= 4 else {
+                index += 1
+                continue
+            }
+
+            let statusCode = String(record.prefix(2))
+            let path = String(record.dropFirst(3))
+            let isRenameOrCopy = statusCode.contains("R") || statusCode.contains("C")
+            let originalPath = isRenameOrCopy && index + 1 < records.count ? records[index + 1] : nil
+            changes.append(WorkingTreeChange(
+                status: displayStatus(for: statusCode),
+                path: path,
+                originalPath: originalPath,
+                isUntracked: statusCode == "??"
+            ))
+            index += isRenameOrCopy ? 2 : 1
+        }
+
+        return changes
+    }
+
+    private static func displayStatus(for code: String) -> String {
+        if code == "??" || code.contains("A") { return "A" }
+        if code.contains("D") { return "D" }
+        if code.contains("R") { return "R" }
+        if code.contains("C") { return "C" }
+        return "M"
     }
 
     private static func repositoryName(fromRemote remote: String) -> String? {
@@ -312,6 +398,13 @@ actor GitService {
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
+}
+
+private struct WorkingTreeChange {
+    let status: String
+    let path: String
+    let originalPath: String?
+    let isUntracked: Bool
 }
 
 private final class ProcessOutputReader: @unchecked Sendable {

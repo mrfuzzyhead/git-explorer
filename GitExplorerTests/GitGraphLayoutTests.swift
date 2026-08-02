@@ -2,6 +2,31 @@ import XCTest
 @testable import GitExplorer
 
 final class GitGraphLayoutTests: XCTestCase {
+    func testGraphColumnsFillTheAvailableTableWidth() {
+        let widths = CommitGraphColumnWidths(
+            branchTag: 140,
+            graph: 70,
+            message: 180,
+            user: 100,
+            date: 80
+        )
+
+        let filled = widths.filling(minimumTotalWidth: 800)
+
+        XCTAssertEqual(filled.totalWidth, 800)
+        XCTAssertEqual(filled.message, 410)
+        XCTAssertEqual(filled.branchTag, widths.branchTag)
+        XCTAssertEqual(filled.graph, widths.graph)
+        XCTAssertEqual(filled.user, widths.user)
+        XCTAssertEqual(filled.date, widths.date)
+    }
+
+    func testGraphColumnsKeepTheirWidthWhenWiderThanTheTable() {
+        let widths = CommitGraphColumnWidths()
+
+        XCTAssertEqual(widths.filling(minimumTotalWidth: 500).totalWidth, widths.totalWidth)
+    }
+
     func testOriginHeadReferenceIsHidden() {
         XCTAssertEqual(
             CommitReferencePresentation.branchLabels(
@@ -46,6 +71,15 @@ final class GitGraphLayoutTests: XCTestCase {
         )!
         let muchLater = oldDate.addingTimeInterval(29 * 86_400)
         XCTAssertEqual(CommitAgeFormatter.string(for: oldDate, relativeTo: muchLater), "2 Jul 26")
+    }
+
+    func testUpdatedFormattingAddsAgoOnlyToRelativeValues() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let recentDate = now.addingTimeInterval(-2 * 86_400)
+        let oldDate = now.addingTimeInterval(-29 * 86_400)
+
+        XCTAssertEqual(CommitAgeFormatter.updatedString(for: recentDate, relativeTo: now), "2 days ago")
+        XCTAssertFalse(CommitAgeFormatter.updatedString(for: oldDate, relativeTo: now).hasSuffix(" ago"))
     }
 
     func testHoverEnterSelectsCommit() {

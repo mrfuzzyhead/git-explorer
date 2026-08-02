@@ -20,8 +20,8 @@ private struct RemoteRepositoryView: View {
     @State private var selection = RemoteTab.graph
 
     private enum RemoteTab: String, CaseIterable, Identifiable {
-        case readme = "README"
-        case graph = "Git Graph"
+        case readme = "Readme"
+        case graph = "Graph"
         case files = "Files"
         var id: Self { self }
     }
@@ -34,18 +34,13 @@ private struct RemoteRepositoryView: View {
                 Button {
                     Task { await model.clone(repository) }
                 } label: {
-                    Label("Clone", systemImage: "square.and.arrow.down")
+                    Label("Clone", systemImage: "arrow.down.to.line")
+                        .frame(height: 20, alignment: .center)
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
-
-                if let url = repository.webURL {
-                    Link(destination: url) {
-                        Label("Open on GitHub", systemImage: "safari")
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                }
+                .controlSize(.regular)
+                .disabled(model.cloningRepositoryIDs.contains(repository.id))
             }
             Divider()
             Group {
@@ -77,7 +72,7 @@ private struct RemoteRepositoryView: View {
             do {
                 readme = try await model.github.readme(fullName: repository.fullName, token: model.githubToken)
             } catch {
-                model.errorMessage = error.localizedDescription
+                model.showError(error.localizedDescription, title: "Couldn’t load README")
             }
         }
     }
@@ -143,7 +138,7 @@ private struct LocalRepositoryView: View {
             do { statusState = .loaded(try await model.git.status(at: url)) }
             catch {
                 statusState = .unavailable
-                model.errorMessage = error.localizedDescription
+                model.showError(error.localizedDescription, title: "Couldn’t load repository status")
             }
         }
     }
@@ -153,6 +148,12 @@ private struct LocalRepositoryView: View {
         operation = requestedOperation
         Task {
             defer { operation = nil }
+            let toastID = model.showToast(
+                title: "\(requestedOperation.progressTitle) \(repository.name)…",
+                style: .information,
+                showsActivity: true,
+                isDismissible: false
+            )
             do {
                 switch requestedOperation {
                 case .fetch: try await model.git.fetch(at: url)
@@ -162,8 +163,23 @@ private struct LocalRepositoryView: View {
                 }
                 statusState = .loaded(try await model.git.status(at: url))
                 graphReloadToken += 1
+                model.updateToast(
+                    toastID,
+                    title: requestedOperation.successTitle,
+                    message: repository.name,
+                    style: .success,
+                    showsActivity: false,
+                    isDismissible: true
+                )
             } catch {
-                model.errorMessage = error.localizedDescription
+                model.updateToast(
+                    toastID,
+                    title: requestedOperation.failureTitle,
+                    message: error.localizedDescription,
+                    style: .error,
+                    showsActivity: false,
+                    isDismissible: true
+                )
             }
         }
     }
@@ -192,6 +208,18 @@ private enum RepositoryOperation: String {
         case .sync: "arrow.triangle.2.circlepath"
         }
     }
+
+    var progressTitle: String {
+        switch self {
+        case .fetch: "Fetching"
+        case .pull: "Pulling"
+        case .push: "Pushing"
+        case .sync: "Syncing"
+        }
+    }
+
+    var successTitle: String { "\(rawValue) complete" }
+    var failureTitle: String { "\(rawValue) failed" }
 }
 
 private enum LocalRepositoryStatusState {
@@ -216,9 +244,12 @@ private struct RepositoryHeader: View {
                     .font(.title2.bold())
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(repository.description ?? (repository.isLocal ? "Local repository" : repository.name))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                if let description = repository.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !description.isEmpty {
+                    Text(description)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
             metadata
         }
@@ -238,7 +269,7 @@ private struct RepositoryHeader: View {
             branchStatus
             if let updatedAt = repository.updatedAt {
                 Label {
-                    Text("Updated \(updatedAt, style: .relative)")
+                    Text("Updated \(CommitAgeFormatter.updatedString(for: updatedAt))")
                 } icon: {
                     Image(systemName: "clock")
                 }
@@ -301,18 +332,38 @@ private struct RepositoryViewBar<Tab: Hashable & Identifiable & RawRepresentable
 
     var body: some View {
         HStack(spacing: 16) {
-            Picker("View", selection: $selection) {
+            HStack(spacing: 2) {
                 ForEach(tabs) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    Button {
+                        selection = tab
+                    } label: {
+                        Text(tab.rawValue)
+                            .font(.callout.weight(.medium))
+                            .padding(.horizontal, 13)
+                            .frame(minHeight: 28)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .background {
+                        if selection == tab {
+                            Capsule().fill(Color.accentColor)
+                        }
+                    }
+                    .foregroundStyle(selection == tab ? .white : .primary)
+                    .accessibilityAddTraits(selection == tab ? .isSelected : [])
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 420)
+            .padding(2)
+            .background(.quaternary, in: Capsule())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Repository view")
+
             Spacer(minLength: 20)
             HStack(spacing: 8) {
                 actions
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -343,7 +394,7 @@ private struct LocalReadmeView: View {
             defer { loaded = true }
             guard let url = repository.localURL else { return }
             do { readme = try await model.git.readREADME(at: url) }
-            catch { model.errorMessage = error.localizedDescription }
+            catch { model.showError(error.localizedDescription, title: "Couldn’t load README") }
         }
     }
 }

@@ -1,0 +1,548 @@
+import SwiftUI
+
+struct CommitGraphList: View {
+    let layouts: [CommitLayout]
+    let highlightedIDs: Set<String>
+    @Binding var hoveredCommitID: String?
+    @Binding var selectedCommit: GitCommit?
+    let repositoryStatus: RepositoryStatus?
+    let workingTreeLayout: CommitLayout?
+    let onBranchClick: (String) -> Void
+    let loadedCommitCount: Int
+    let hasMoreCommits: Bool
+    let loadingMore: Bool
+    @Binding var columnWidths: CommitGraphColumnWidths
+    let loadMore: () -> Void
+    @State private var hoverTarget: CommitHoverTarget?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let displayedColumnWidths = columnWidths.filling(
+                minimumTotalWidth: geometry.size.width
+            )
+
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    CommitGraphColumnHeader(
+                        columnWidths: $columnWidths,
+                        displayedColumnWidths: displayedColumnWidths
+                    )
+                    Divider()
+
+                    ScrollView(.vertical) {
+                        rows(columnWidths: displayedColumnWidths)
+                    }
+                }
+                .frame(
+                    width: displayedColumnWidths.totalWidth,
+                    height: geometry.size.height,
+                    alignment: .topLeading
+                )
+            }
+        }
+    }
+
+    private func rows(columnWidths: CommitGraphColumnWidths) -> some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            if let workingTreeLayout, let repositoryStatus {
+                HStack(spacing: 0) {
+                    ReferenceColumn(width: columnWidths.branchTag) {
+                        BranchPill(
+                            name: repositoryStatus.branch,
+                            divergence: repositoryStatus.divergence(for: repositoryStatus.branch),
+                            isCurrent: true,
+                            color: GraphPalette.color(for: workingTreeLayout.lane),
+                            action: onBranchClick
+                        )
+                    }
+
+                    LaneCanvas(
+                        layout: workingTreeLayout,
+                        availableWidth: columnWidths.graph,
+                        totalLaneCount: maxLaneCount,
+                        isWorkingTree: true
+                    )
+                    .frame(width: columnWidths.graph, height: rowHeight)
+
+                    WorkingTreeMetadataRow()
+                        .frame(width: columnWidths.message, height: rowHeight)
+
+                    Color.clear.frame(width: columnWidths.user, height: rowHeight)
+                    Color.clear.frame(width: columnWidths.date, height: rowHeight)
+                }
+                .background(
+                    selectedCommit?.id == workingTreeLayout.id
+                        ? Color.accentColor.opacity(0.2)
+                        : Color.orange.opacity(0.08)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { selectedCommit = workingTreeLayout.commit }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Uncommitted changes on \(repositoryStatus.branch)")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAddTraits(
+                    selectedCommit?.id == workingTreeLayout.id ? .isSelected : []
+                )
+            }
+
+            ForEach(layouts) { layout in
+                HStack(spacing: 0) {
+                    CommitReferenceColumn(
+                        commit: layout.commit,
+                        color: GraphPalette.color(for: layout.lane),
+                        repositoryStatus: repositoryStatus,
+                        width: columnWidths.branchTag,
+                        onBranchClick: onBranchClick
+                    )
+
+                    LaneCanvas(
+                        layout: layout,
+                        availableWidth: columnWidths.graph,
+                        totalLaneCount: maxLaneCount
+                    )
+                    .frame(width: columnWidths.graph, height: rowHeight)
+
+                    CommitMetadataRow(
+                        commit: layout.commit,
+                        messageWidth: columnWidths.message,
+                        userWidth: columnWidths.user,
+                        dateWidth: columnWidths.date
+                    )
+                    .frame(height: rowHeight)
+                }
+                .background(rowBackground(for: layout))
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    updateHover(for: layout.id, surface: .metadata, phase: phase)
+                }
+                .onTapGesture { selectedCommit = layout.commit }
+            }
+
+            loadMoreRow
+        }
+        .frame(width: columnWidths.totalWidth, alignment: .leading)
+    }
+
+    private let rowHeight: CGFloat = 36
+    private var maxLaneCount: Int {
+        max(layouts.map(\.laneCount).max() ?? 1, workingTreeLayout?.laneCount ?? 1)
+    }
+
+    @ViewBuilder
+    private var loadMoreRow: some View {
+        if loadingMore {
+            ProgressView("Loading older commits…")
+                .frame(width: columnWidths.totalWidth)
+                .padding(.vertical)
+        } else if hasMoreCommits {
+            Button("Load older commits") { loadMore() }
+                .buttonStyle(.borderless)
+                .frame(width: columnWidths.totalWidth)
+                .padding(.vertical)
+                .onAppear { loadMore() }
+        } else {
+            Text("\(loadedCommitCount) commits loaded")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: columnWidths.totalWidth)
+                .padding(.vertical)
+        }
+    }
+
+    private func rowBackground(for layout: CommitLayout) -> Color {
+        if selectedCommit?.id == layout.id {
+            return Color.accentColor.opacity(0.2)
+        }
+        if hoveredCommitID == layout.id {
+            return Color.accentColor.opacity(0.14)
+        }
+        if hoveredCommitID != nil, highlightedIDs.contains(layout.id) {
+            return Color.accentColor.opacity(0.045)
+        }
+        if layout.commit.isHead {
+            return Color.accentColor.opacity(0.08)
+        }
+        return .clear
+    }
+
+    private func updateHover(
+        for commitID: String,
+        surface: CommitHoverSurface,
+        phase: HoverPhase
+    ) {
+        let target = CommitHoverTarget(commitID: commitID, surface: surface)
+        let event: CommitHoverEvent
+        switch phase {
+        case .active:
+            event = .entered(target)
+        case .ended:
+            event = .exited(target)
+        }
+        hoverTarget = CommitHoverState.reduce(current: hoverTarget, event: event)
+        hoveredCommitID = hoverTarget?.commitID
+    }
+}
+
+struct CommitGraphColumnWidths {
+    var branchTag: CGFloat = 220
+    var graph: CGFloat = 120
+    var message: CGFloat = 360
+    var user: CGFloat = 160
+    var date: CGFloat = 110
+
+    var totalWidth: CGFloat { branchTag + graph + message + user + date }
+
+    func filling(minimumTotalWidth: CGFloat) -> CommitGraphColumnWidths {
+        guard totalWidth < minimumTotalWidth else { return self }
+
+        var widths = self
+        widths.message += minimumTotalWidth - totalWidth
+        return widths
+    }
+}
+
+private struct CommitGraphColumnHeader: View {
+    @Binding var columnWidths: CommitGraphColumnWidths
+    let displayedColumnWidths: CommitGraphColumnWidths
+
+    var body: some View {
+        HStack(spacing: 0) {
+            header(
+                "Branch/tag",
+                width: $columnWidths.branchTag,
+                displayedWidth: displayedColumnWidths.branchTag,
+                minimumWidth: 140
+            )
+            header(
+                "Graph",
+                width: $columnWidths.graph,
+                displayedWidth: displayedColumnWidths.graph,
+                minimumWidth: 70
+            )
+            header(
+                "Message",
+                width: $columnWidths.message,
+                displayedWidth: displayedColumnWidths.message,
+                minimumWidth: 180
+            )
+            header(
+                "User",
+                width: $columnWidths.user,
+                displayedWidth: displayedColumnWidths.user,
+                minimumWidth: 100
+            )
+            header(
+                "Date",
+                width: $columnWidths.date,
+                displayedWidth: displayedColumnWidths.date,
+                minimumWidth: 80
+            )
+        }
+        .frame(height: 28)
+        .background(.bar)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func header(
+        _ title: String,
+        width: Binding<CGFloat>,
+        displayedWidth: CGFloat,
+        minimumWidth: CGFloat
+    ) -> some View {
+        ResizableColumnHeader(
+            title: title,
+            width: width,
+            displayedWidth: displayedWidth,
+            minimumWidth: minimumWidth
+        )
+    }
+}
+
+private struct ResizableColumnHeader: View {
+    let title: String
+    @Binding var width: CGFloat
+    let displayedWidth: CGFloat
+    let minimumWidth: CGFloat
+    @State private var dragStartWidth: CGFloat?
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+
+            Rectangle()
+                .fill(.separator)
+                .frame(width: 1)
+
+            Color.clear
+                .contentShape(Rectangle())
+                .frame(width: 16)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                        .onChanged { value in
+                            if dragStartWidth == nil {
+                                dragStartWidth = displayedWidth
+                            }
+                            let proposedWidth = max(
+                                minimumWidth,
+                                (dragStartWidth ?? width) + value.translation.width
+                            )
+                            var transaction = Transaction()
+                            transaction.animation = nil
+                            withTransaction(transaction) {
+                                width = proposedWidth
+                            }
+                        }
+                        .onEnded { _ in
+                            dragStartWidth = nil
+                        }
+                )
+                .help("Drag to resize the \(title) column")
+                .accessibilityLabel("Resize \(title) column")
+        }
+        .frame(width: displayedWidth, height: 28)
+    }
+}
+
+private enum GraphPalette {
+    private static let colors: [Color] = [
+        .blue, .purple, .orange, .green, .pink, .teal, .yellow, .indigo
+    ]
+
+    static func color(for lane: Int) -> Color {
+        colors[lane % colors.count]
+    }
+}
+
+private struct ReferenceColumn<Content: View>: View {
+    let width: CGFloat
+    let content: Content
+
+    init(width: CGFloat, @ViewBuilder content: () -> Content) {
+        self.width = width
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) { content }
+                .padding(.horizontal, 8)
+        }
+        .frame(width: width, alignment: .leading)
+    }
+}
+
+private struct CommitReferenceColumn: View {
+    let commit: GitCommit
+    let color: Color
+    let repositoryStatus: RepositoryStatus?
+    let width: CGFloat
+    let onBranchClick: (String) -> Void
+
+    private var branches: [CommitBranchLabel] {
+        CommitReferencePresentation.branchLabels(for: commit.branches)
+    }
+
+    var body: some View {
+        ReferenceColumn(width: width) {
+            ForEach(branches, id: \.actionName) { branch in
+                BranchPill(
+                    name: branch.name,
+                    divergence: repositoryStatus?.divergence(for: branch.actionName),
+                    isCurrent: commit.isHead && repositoryStatus?.branch == branch.actionName,
+                    includesRemote: branch.includesRemote,
+                    actionName: branch.actionName,
+                    color: color,
+                    action: onBranchClick
+                )
+            }
+            ForEach(commit.tags, id: \.self) { tag in
+                TagPill(name: tag, color: color)
+            }
+        }
+    }
+}
+
+private struct LaneCanvas: View {
+    let layout: CommitLayout
+    let availableWidth: CGFloat
+    let totalLaneCount: Int
+    var isWorkingTree = false
+    var body: some View {
+        Canvas { context, size in
+            let centerY = size.height / 2
+            for lane in layout.passThroughLanes {
+                var path = Path()
+                path.move(to: CGPoint(x: x(lane), y: 0))
+                path.addLine(to: CGPoint(x: x(lane), y: size.height))
+                context.stroke(path, with: .color(color(lane)), lineWidth: 2.5)
+            }
+
+            if layout.hasIncomingConnection {
+                var incoming = Path()
+                incoming.move(to: CGPoint(x: x(layout.lane), y: 0))
+                incoming.addLine(to: CGPoint(x: x(layout.lane), y: centerY))
+                context.stroke(incoming, with: .color(color(layout.lane)), lineWidth: 2.5)
+            }
+
+            for connection in layout.incomingConnections {
+                var path = Path()
+                let start = CGPoint(x: x(connection.fromLane), y: 0)
+                let end = CGPoint(x: x(connection.toLane), y: centerY)
+                path.move(to: start)
+                path.addCurve(
+                    to: end,
+                    control1: CGPoint(x: start.x, y: size.height * 0.28),
+                    control2: CGPoint(x: end.x, y: centerY - size.height * 0.28)
+                )
+                context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
+            }
+
+            for connection in layout.connections {
+                var path = Path()
+                let start = CGPoint(x: x(connection.fromLane), y: centerY)
+                let end = CGPoint(x: x(connection.toLane), y: size.height)
+                path.move(to: start)
+                path.addCurve(
+                    to: end,
+                    control1: CGPoint(x: start.x, y: centerY + size.height * 0.28),
+                    control2: CGPoint(x: end.x, y: size.height * 0.72)
+                )
+                context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
+            }
+
+            let radius: CGFloat = isWorkingTree ? 6 : 5
+            let rect = CGRect(
+                x: x(layout.lane) - radius,
+                y: centerY - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
+            context.fill(Path(ellipseIn: rect), with: .color(color(layout.lane)))
+            if layout.commit.isHead {
+                context.stroke(Path(ellipseIn: rect.insetBy(dx: -3, dy: -3)), with: .color(color(layout.lane)), lineWidth: 2)
+            }
+        }
+        .accessibilityLabel("\(isWorkingTree ? "Working tree" : "Commit") graph lane \(layout.lane + 1)")
+    }
+
+    private func x(_ lane: Int) -> CGFloat {
+        CGFloat(lane) * laneSpacing + 14
+    }
+    private var laneSpacing: CGFloat {
+        guard totalLaneCount > 1 else { return 18 }
+        return min(18, max(5, (availableWidth - 28) / CGFloat(totalLaneCount - 1)))
+    }
+    private func color(_ lane: Int) -> Color { GraphPalette.color(for: lane) }
+}
+
+private struct WorkingTreeMetadataRow: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Label("Uncommitted changes", systemImage: "pencil.and.list.clipboard")
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+            Spacer(minLength: 8)
+        }
+        .font(.body)
+        .padding(.trailing, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CommitMetadataRow: View {
+    let commit: GitCommit
+    let messageWidth: CGFloat
+    let userWidth: CGFloat
+    let dateWidth: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text(commit.message)
+                    .fontWeight(.regular)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                if commit.parents.count > 1 {
+                    Image(systemName: "arrow.triangle.merge")
+                        .help("Merge commit")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(width: messageWidth, alignment: .leading)
+
+            Text(commit.author)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 8)
+                .frame(width: userWidth, alignment: .leading)
+
+            Text(CommitAgeFormatter.string(for: commit.timestamp))
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .frame(width: dateWidth, alignment: .leading)
+        }
+        .font(.body)
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct BranchPill: View {
+    let name: String
+    let divergence: BranchDivergence?
+    var isCurrent = false
+    var includesRemote = false
+    var actionName: String?
+    var color: Color = .blue
+    let action: (String) -> Void
+    var body: some View {
+        Button { action(actionName ?? name) } label: {
+            HStack(spacing: 4) {
+                Label(
+                    name,
+                    systemImage: isCurrent || name == "HEAD" ? "location.fill" : "arrow.triangle.branch"
+                )
+                if includesRemote {
+                    Image(systemName: "icloud.fill")
+                        .help("Local and remote branch")
+                }
+                if let divergence {
+                    if divergence.ahead > 0 {
+                        Text("↑\(divergence.ahead)")
+                            .help("\(divergence.ahead) commits ahead")
+                    }
+                    if divergence.behind > 0 {
+                        Text("↓\(divergence.behind)")
+                            .help("\(divergence.behind) commits behind")
+                    }
+                }
+            }
+                .font(.caption2.bold())
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(color.opacity(0.14), in: Capsule())
+                .foregroundStyle(color)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct TagPill: View {
+    let name: String
+    var color: Color = .orange
+    var body: some View {
+        Label(name, systemImage: "tag.fill")
+            .font(.caption2.bold())
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .overlay {
+                Capsule()
+                    .stroke(color.opacity(0.5), lineWidth: 1)
+            }
+            .foregroundStyle(color)
+    }
+}

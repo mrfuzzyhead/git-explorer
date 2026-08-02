@@ -12,11 +12,30 @@ struct GitExplorerApp: App {
                 .task { await model.start() }
         }
         .windowStyle(.titleBar)
+        .commands {
+            SettingsCommands()
+        }
 
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(model)
-                .frame(width: 620, height: 410)
+                .frame(minWidth: 640, minHeight: 420)
+        }
+        .defaultSize(width: 780, height: 500)
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentMinSize)
+    }
+}
+
+private struct SettingsCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                openWindow(id: "settings")
+            }
+            .keyboardShortcut(",", modifiers: .command)
         }
     }
 }

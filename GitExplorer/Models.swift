@@ -98,7 +98,11 @@ enum GitAvailability: Equatable {
 struct CommitDetails {
     let commit: GitCommit
     let changedFiles: [String]
-    let diff: String
+    let fileDiffs: [String: String]
+
+    var diff: String {
+        changedFiles.compactMap { fileDiffs[$0] }.joined(separator: "\n\n")
+    }
 }
 
 struct RemoteFileEntry: Identifiable, Hashable {

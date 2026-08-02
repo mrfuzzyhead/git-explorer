@@ -1,0 +1,242 @@
+import SwiftUI
+
+struct CommitDiffView: View {
+    let diff: String
+
+    private var document: DiffDocument {
+        DiffDocument(diff)
+    }
+
+    var body: some View {
+        let document = document
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Label("Diff", systemImage: "plus.forwardslash.minus")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                DiffCountLabel(
+                    count: document.addedLineCount,
+                    label: "added",
+                    color: .green
+                )
+                DiffCountLabel(
+                    count: document.deletedLineCount,
+                    label: "deleted",
+                    color: .red
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+
+            Divider()
+
+            if diff.isEmpty {
+                ContentUnavailableView(
+                    "No diff available",
+                    systemImage: "doc.text.magnifyingglass"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                GeometryReader { geometry in
+                    ScrollView([.vertical, .horizontal]) {
+                        DiffLinesLayout(
+                            minimumWidth: geometry.size.width,
+                            minimumHeight: geometry.size.height
+                        ) {
+                            ForEach(Array(document.lines.enumerated()), id: \.offset) { _, line in
+                                DiffLineRow(line: line)
+                                    .frame(
+                                        minWidth: geometry.size.width,
+                                        maxWidth: .infinity,
+                                        alignment: .leading
+                                    )
+                                    .background(line.backgroundColor)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct DiffLinesLayout: Layout {
+    let minimumWidth: CGFloat
+    let minimumHeight: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return CGSize(
+            width: max(minimumWidth, sizes.map(\.width).max() ?? 0),
+            height: max(minimumHeight, sizes.reduce(0) { $0 + $1.height })
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var y = bounds.minY
+
+        for subview in subviews {
+            let rowProposal = ProposedViewSize(width: bounds.width, height: nil)
+            let rowHeight = subview.sizeThatFits(rowProposal).height
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: rowHeight)
+            )
+            y += rowHeight
+        }
+    }
+}
+
+private struct DiffCountLabel: View {
+    let count: Int
+    let label: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text("\(count) \(label)")
+                .monospacedDigit()
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct DiffLineRow: View {
+    let line: DiffLine
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(line.borderColor)
+                .frame(width: 3)
+
+            Text(line.content.isEmpty ? " " : line.content)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(line.foregroundStyle)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 2)
+        }
+    }
+}
+
+private struct DiffDocument {
+    let lines: [DiffLine]
+    let addedLineCount: Int
+    let deletedLineCount: Int
+
+    init(_ diff: String) {
+        let rawLines = diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        addedLineCount = rawLines.filter {
+            $0.hasPrefix("+") && !$0.hasPrefix("+++")
+        }.count
+        deletedLineCount = rawLines.filter {
+            $0.hasPrefix("-") && !$0.hasPrefix("---")
+        }.count
+
+        if let firstHunk = rawLines.firstIndex(where: { $0.hasPrefix("@@") }) {
+            lines = rawLines[firstHunk...].map(DiffLine.init)
+        } else {
+            let meaningfulLines = rawLines.drop(while: Self.isPatchMetadata)
+            lines = meaningfulLines.map(DiffLine.init)
+        }
+    }
+
+    private static func isPatchMetadata(_ line: String) -> Bool {
+        line.hasPrefix("diff --git ")
+            || line.hasPrefix("index ")
+            || line.hasPrefix("--- ")
+            || line.hasPrefix("+++ ")
+            || line.hasPrefix("new file mode ")
+            || line.hasPrefix("deleted file mode ")
+            || line.hasPrefix("old mode ")
+            || line.hasPrefix("new mode ")
+            || line.hasPrefix("similarity index ")
+            || line.hasPrefix("rename from ")
+            || line.hasPrefix("rename to ")
+            || line.isEmpty
+    }
+}
+
+private struct DiffLine {
+    enum Kind {
+        case added
+        case deleted
+        case hunk
+        case context
+    }
+
+    let content: String
+    let kind: Kind
+
+    init(_ rawLine: String) {
+        if rawLine.hasPrefix("+") && !rawLine.hasPrefix("+++") {
+            kind = .added
+            content = String(rawLine.dropFirst())
+        } else if rawLine.hasPrefix("-") && !rawLine.hasPrefix("---") {
+            kind = .deleted
+            content = String(rawLine.dropFirst())
+        } else if rawLine.hasPrefix("@@") {
+            kind = .hunk
+            content = Self.hunkContext(from: rawLine)
+        } else {
+            kind = .context
+            content = rawLine.hasPrefix(" ") ? String(rawLine.dropFirst()) : rawLine
+        }
+    }
+
+    private static func hunkContext(from rawLine: String) -> String {
+        guard let closingMarker = rawLine.range(of: "@@", range: rawLine.index(rawLine.startIndex, offsetBy: 2)..<rawLine.endIndex) else {
+            return rawLine
+        }
+        return rawLine[closingMarker.upperBound...].trimmingCharacters(in: .whitespaces)
+    }
+
+    var backgroundColor: Color {
+        switch kind {
+        case .added: Color.green.opacity(0.10)
+        case .deleted: Color.red.opacity(0.10)
+        case .hunk: Color.gray.opacity(0.12)
+        case .context: .clear
+        }
+    }
+
+    var borderColor: Color {
+        switch kind {
+        case .added: Color.green.opacity(0.75)
+        case .deleted: Color.red.opacity(0.75)
+        case .hunk, .context: .clear
+        }
+    }
+
+    var foregroundStyle: Color {
+        switch kind {
+        case .hunk: Color(nsColor: .secondaryLabelColor)
+        case .added, .deleted, .context: Color(nsColor: .labelColor)
+        }
+    }
+}

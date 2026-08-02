@@ -13,7 +13,13 @@ enum GitHubError: LocalizedError {
     }
 }
 
+struct GitHubAccount: Equatable, Sendable {
+    let login: String
+}
+
 actor GitHubService {
+    private struct APIUser: Decodable { let login: String }
+    private struct APIError: Decodable { let message: String }
     private struct APIRepository: Decodable {
         let id: Int
         let name: String
@@ -65,6 +71,13 @@ actor GitHubService {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+
+    func account(token: String) async throws -> GitHubAccount {
+        let data = try await request(path: "/user", token: token)
+        let user = try decoder.decode(APIUser.self, from: data)
+        return GitHubAccount(login: user.login)
+    }
+
     func repositories(token: String) async throws -> [Repository] {
         var apiRepositories: [APIRepository] = []
         for page in 1...20 {
@@ -162,11 +175,12 @@ actor GitHubService {
         let value = try decoder.decode(APICommitDetails.self, from: data)
         let files = value.files ?? []
         let changedFiles = files.map { "\($0.status)\t\($0.filename)" }
-        let diff = files.map { file in
+        let fileDiffs = Dictionary(uniqueKeysWithValues: files.map { file in
             let header = "--- \(file.filename)\n+++ \(file.filename)"
-            return [header, file.patch ?? "Binary file or patch unavailable."].joined(separator: "\n")
-        }.joined(separator: "\n\n")
-        return CommitDetails(commit: commit, changedFiles: changedFiles, diff: diff)
+            let diff = [header, file.patch ?? "Binary file or patch unavailable."].joined(separator: "\n")
+            return ("\(file.status)\t\(file.filename)", diff)
+        })
+        return CommitDetails(commit: commit, changedFiles: changedFiles, fileDiffs: fileDiffs)
     }
 
     func files(fullName: String, path: String, reference: String?, token: String) async throws -> [RemoteFileEntry] {
@@ -222,7 +236,10 @@ actor GitHubService {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw GitHubError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
-            throw GitHubError.requestFailed(http.statusCode, String(data: data, encoding: .utf8) ?? "Unknown error")
+            let message = (try? decoder.decode(APIError.self, from: data).message)
+                ?? String(data: data, encoding: .utf8)
+                ?? "Unknown error"
+            throw GitHubError.requestFailed(http.statusCode, message)
         }
         return data
     }

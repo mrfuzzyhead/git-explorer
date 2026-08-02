@@ -2,37 +2,38 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var repositoryColumnWidth: CGFloat = 320
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             RepositorySidebar()
-                .navigationSplitViewColumnWidth(300)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { width in
+                    guard columnVisibility != .detailOnly, width >= 260 else { return }
+                    repositoryColumnWidth = min(width, 480)
+                }
+                .navigationSplitViewColumnWidth(
+                    min: 260,
+                    ideal: repositoryColumnWidth,
+                    max: 480
+                )
         } detail: {
-            ZStack {
-                if let repository = model.selectedRepository {
-                    RepositoryDetailView(repository: repository)
-                        .id(repository.id)
-                } else if !model.isLoading {
-                    ContentUnavailableView(
-                        "Select a Repository",
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        description: Text("Choose a repository from the sidebar to explore it.")
-                    )
-                }
-
-                if model.isLoading {
-                    PaneLoadingView(
-                        model.repositories.isEmpty ? "Loading repository…" : "Refreshing repository…"
-                    )
-                    .background(.regularMaterial)
-                }
+            if let repository = model.selectedRepository {
+                RepositoryDetailView(repository: repository)
+                    .id(repository.id)
+            } else {
+                ContentUnavailableView(
+                    "Select a Repository",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    description: Text("Choose a repository from the sidebar to explore it.")
+                )
             }
         }
-        .overlay(alignment: .bottom) {
-            if let error = model.errorMessage {
-                ErrorBanner(message: error) { model.errorMessage = nil }
-                    .padding()
-            }
+        .overlay(alignment: .topTrailing) {
+            ToastStackView(toasts: model.toasts, dismiss: model.dismissToast)
+                .padding(16)
         }
         .safeAreaInset(edge: .top) {
             if case let .missing(message) = model.gitAvailability {
@@ -80,22 +81,5 @@ private struct GitMissingBanner: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(.regularMaterial)
-    }
-}
-
-private struct ErrorBanner: View {
-    let message: String
-    let dismiss: () -> Void
-
-    var body: some View {
-        HStack {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
-            Text(message).lineLimit(2)
-            Spacer()
-            Button("Dismiss", action: dismiss)
-        }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .shadow(radius: 8)
     }
 }

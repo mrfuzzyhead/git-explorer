@@ -107,6 +107,15 @@ enum CommitAgeFormatter {
         return formatter.string(from: date)
     }
 
+    static func updatedString(for date: Date, relativeTo now: Date = Date()) -> String {
+        let value = string(for: date, relativeTo: now)
+        return usesRelativeFormat(for: date, relativeTo: now) ? "\(value) ago" : value
+    }
+
+    private static func usesRelativeFormat(for date: Date, relativeTo now: Date) -> Bool {
+        max(0, now.timeIntervalSince(date)) <= 4 * 7 * 24 * 60 * 60
+    }
+
     private static func unit(_ value: Int, singular: String, plural: String) -> String {
         "\(value) \(value == 1 ? singular : plural)"
     }

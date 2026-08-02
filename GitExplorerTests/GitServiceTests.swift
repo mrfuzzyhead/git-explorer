@@ -2,6 +2,13 @@ import XCTest
 @testable import GitExplorer
 
 final class GitServiceTests: XCTestCase {
+    func testGitHTTPAuthorizationHeaderUsesBasicTokenCredentials() {
+        XCTAssertEqual(
+            GitService.gitHTTPAuthorizationHeader(token: "test-token"),
+            "Authorization: Basic eC1hY2Nlc3MtdG9rZW46dGVzdC10b2tlbg=="
+        )
+    }
+
     func testDiscoversNestedRepositoryAndStopsAtGitRoot() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("GitExplorerTests-\(UUID().uuidString)")
@@ -96,6 +103,30 @@ final class GitServiceTests: XCTestCase {
         XCTAssertEqual(status.divergence(for: "origin/main"), BranchDivergence(ahead: 0, behind: 2))
         XCTAssertNil(status.divergence(for: "feature"))
         XCTAssertTrue(status.hasChanges)
+
+        try write("base changed\n", to: repository.appendingPathComponent("base.txt"))
+        try write("staged\n", to: repository.appendingPathComponent("staged.txt"))
+        try git(["add", "staged.txt"], at: repository)
+        let workingTreeCommit = GitCommit(
+            id: "working-tree",
+            parents: [head.id],
+            author: "",
+            timestamp: Date(),
+            message: "Uncommitted changes",
+            branches: [],
+            tags: [],
+            isHead: false
+        )
+        let workingTreeDetails = try await service.workingTreeDetails(
+            for: workingTreeCommit,
+            at: repository
+        )
+        XCTAssertTrue(workingTreeDetails.changedFiles.contains("M\tbase.txt"))
+        XCTAssertTrue(workingTreeDetails.changedFiles.contains("A\tstaged.txt"))
+        XCTAssertTrue(workingTreeDetails.changedFiles.contains("A\tuncommitted.txt"))
+        XCTAssertTrue(workingTreeDetails.fileDiffs["M\tbase.txt"]?.contains("base changed") == true)
+        XCTAssertTrue(workingTreeDetails.fileDiffs["A\tstaged.txt"]?.contains("staged") == true)
+        XCTAssertTrue(workingTreeDetails.fileDiffs["A\tuncommitted.txt"]?.contains("dirty") == true)
     }
 
     func testFetchUpdatesRemoteTrackingBranchAndBehindCount() async throws {
