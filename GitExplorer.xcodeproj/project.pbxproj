@@ -11,10 +11,6 @@
 		1DDBE7807A1AA8968BAC94FD /* MarkdownDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56FDE5AF2CB7C98950E44469 /* MarkdownDocumentTests.swift */; };
 		5C7DC55A0103AAB81CC4F301 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF4A0E553EBAEE0911E654EA /* Assets.xcassets */; };
 		5FDC245B3C2FE701F9F239D7 /* CommitGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1DE8B290DF547214601158B /* CommitGraphView.swift */; };
-		B001B001B001B001B001B001 /* CommitGraphListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001A001A001A001A001A001 /* CommitGraphListView.swift */; };
-		B002B002B002B002B002B002 /* CommitComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A002A002A002A002A002A002 /* CommitComparisonView.swift */; };
-		B003B003B003B003B003B003 /* CommitDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A003A003A003A003A003A003 /* CommitDetailsView.swift */; };
-		B004B004B004B004B004B004 /* CommitDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A004A004A004A004A004A004 /* CommitDiffView.swift */; };
 		654475E7C44B2016AF3BF0D6 /* GitHubService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BF739F4ECCF30A332C525 /* GitHubService.swift */; };
 		654FA3F0DEAF3BB650440911 /* RepositorySidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5168938682731B6690E6389 /* RepositorySidebar.swift */; };
 		716720593062EEA28849C62D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 739327E78B38D74660EB8F92 /* ContentView.swift */; };
@@ -23,6 +19,10 @@
 		8640CFB2A096156103235C4C /* GitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DB667EF11CC3CC2A7FDD19 /* GitService.swift */; };
 		883142CB350D11AFFE020092 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14D3BE2520462F68192A0DAE /* Models.swift */; };
 		8FC2D1296F47FDB78B9FAB3F /* MarkdownPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 617D58E7EEDBECEBCD240CA4 /* MarkdownPreviewView.swift */; };
+		B001B001B001B001B001B001 /* CommitGraphListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001A001A001A001A001A001 /* CommitGraphListView.swift */; };
+		B002B002B002B002B002B002 /* CommitComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A002A002A002A002A002A002 /* CommitComparisonView.swift */; };
+		B003B003B003B003B003B003 /* CommitDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A003A003A003A003A003A003 /* CommitDetailsView.swift */; };
+		B004B004B004B004B004B004 /* CommitDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A004A004A004A004A004A004 /* CommitDiffView.swift */; };
 		B0BB0B5BD13BACFFA89E77DD /* GitGraphLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9A2C2EC59F5E7DA9D2E0C9 /* GitGraphLayoutTests.swift */; };
 		B65D4A99A6014CAC116AB579 /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3D3AE0A6E75F8EE204B12B /* FileBrowserView.swift */; };
 		C97AD76A890CEE7A646D50D1 /* Toast.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6C56826AE1922D8B4D5E13B /* Toast.swift */; };
@@ -56,11 +56,11 @@
 		6A6F59CBC66EC5723EA22DBF /* SourceSyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceSyntaxHighlighter.swift; sourceTree = "<group>"; };
 		739327E78B38D74660EB8F92 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9258D86924F5A83AAA47D1F9 /* GitExplorerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitExplorerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9C8D5725D0CE284B279A9D13 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		A001A001A001A001A001A001 /* CommitGraphListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitGraphListView.swift; sourceTree = "<group>"; };
 		A002A002A002A002A002A002 /* CommitComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitComparisonView.swift; sourceTree = "<group>"; };
 		A003A003A003A003A003A003 /* CommitDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitDetailsView.swift; sourceTree = "<group>"; };
 		A004A004A004A004A004A004 /* CommitDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitDiffView.swift; sourceTree = "<group>"; };
-		9C8D5725D0CE284B279A9D13 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		B5168938682731B6690E6389 /* RepositorySidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySidebar.swift; sourceTree = "<group>"; };
 		BB3D3AE0A6E75F8EE204B12B /* FileBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserView.swift; sourceTree = "<group>"; };
 		BF4A0E553EBAEE0911E654EA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -179,7 +179,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					2B8AA58DB9D6CF084F41D729 = {
 						DevelopmentTeam = VD7DMST4GD;
@@ -276,6 +276,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -293,6 +294,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -340,10 +342,12 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = VD7DMST4GD;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -364,6 +368,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.10;
@@ -405,10 +410,12 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = VD7DMST4GD;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -422,6 +429,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.10;
@@ -434,6 +442,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = GitExplorer/GitExplorer.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GitExplorer/Info.plist;
@@ -453,6 +462,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = GitExplorer/GitExplorer.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GitExplorer/Info.plist;
