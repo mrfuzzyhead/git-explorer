@@ -417,6 +417,7 @@ private struct LaneCanvas: View {
     var body: some View {
         Canvas { context, size in
             let centerY = size.height / 2
+            let radius: CGFloat = isWorkingTree ? 8 : 5
             for lane in layout.passThroughLanes {
                 var path = Path()
                 path.move(to: CGPoint(x: x(lane), y: 0))
@@ -446,7 +447,10 @@ private struct LaneCanvas: View {
 
             for connection in layout.connections {
                 var path = Path()
-                let start = CGPoint(x: x(connection.fromLane), y: centerY)
+                let startY = isWorkingTree && connection.fromLane == layout.lane
+                    ? centerY + radius
+                    : centerY
+                let start = CGPoint(x: x(connection.fromLane), y: startY)
                 let end = CGPoint(x: x(connection.toLane), y: size.height)
                 path.move(to: start)
                 path.addCurve(
@@ -457,7 +461,6 @@ private struct LaneCanvas: View {
                 context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
             }
 
-            let radius: CGFloat = isWorkingTree ? 6 : 5
             let rect = CGRect(
                 x: x(layout.lane) - radius,
                 y: centerY - radius,
@@ -469,7 +472,7 @@ private struct LaneCanvas: View {
                 context.stroke(
                     node,
                     with: .color(color(layout.lane)),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [3, 2])
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [1.5, 2])
                 )
             } else {
                 context.fill(node, with: .color(color(layout.lane)))
