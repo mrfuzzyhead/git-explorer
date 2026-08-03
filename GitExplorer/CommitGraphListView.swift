@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct CommitGraphList: View {
@@ -183,12 +184,18 @@ struct CommitGraphList: View {
     }
 }
 
-struct CommitGraphColumnWidths {
+struct CommitGraphColumnWidths: Equatable {
     var branchTag: CGFloat = 220
     var graph: CGFloat = 120
     var message: CGFloat = 360
     var user: CGFloat = 160
     var date: CGFloat = 110
+
+    private static let branchTagDefaultsKey = "commitGraph.columnWidths.branchTag"
+    private static let graphDefaultsKey = "commitGraph.columnWidths.graph"
+    private static let messageDefaultsKey = "commitGraph.columnWidths.message"
+    private static let userDefaultsKey = "commitGraph.columnWidths.user"
+    private static let dateDefaultsKey = "commitGraph.columnWidths.date"
 
     var totalWidth: CGFloat { branchTag + graph + message + user + date }
 
@@ -198,6 +205,31 @@ struct CommitGraphColumnWidths {
         var widths = self
         widths.message += minimumTotalWidth - totalWidth
         return widths
+    }
+
+    static var saved: CommitGraphColumnWidths {
+        let fallback = CommitGraphColumnWidths()
+        return CommitGraphColumnWidths(
+            branchTag: savedWidth(forKey: branchTagDefaultsKey, fallback: fallback.branchTag),
+            graph: savedWidth(forKey: graphDefaultsKey, fallback: fallback.graph),
+            message: savedWidth(forKey: messageDefaultsKey, fallback: fallback.message),
+            user: savedWidth(forKey: userDefaultsKey, fallback: fallback.user),
+            date: savedWidth(forKey: dateDefaultsKey, fallback: fallback.date)
+        )
+    }
+
+    func save() {
+        let defaults = UserDefaults.standard
+        defaults.set(Double(branchTag), forKey: Self.branchTagDefaultsKey)
+        defaults.set(Double(graph), forKey: Self.graphDefaultsKey)
+        defaults.set(Double(message), forKey: Self.messageDefaultsKey)
+        defaults.set(Double(user), forKey: Self.userDefaultsKey)
+        defaults.set(Double(date), forKey: Self.dateDefaultsKey)
+    }
+
+    private static func savedWidth(forKey key: String, fallback: CGFloat) -> CGFloat {
+        guard UserDefaults.standard.object(forKey: key) != nil else { return fallback }
+        return CGFloat(UserDefaults.standard.double(forKey: key))
     }
 }
 
@@ -265,6 +297,8 @@ private struct ResizableColumnHeader: View {
     let minimumWidth: CGFloat
     @State private var dragStartWidth: CGFloat?
 
+    private let resizeHandleWidth: CGFloat = 24
+
     var body: some View {
         ZStack(alignment: .trailing) {
             Text(title)
@@ -280,7 +314,7 @@ private struct ResizableColumnHeader: View {
 
             Color.clear
                 .contentShape(Rectangle())
-                .frame(width: 16)
+                .frame(width: resizeHandleWidth)
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .global)
                         .onChanged { value in
@@ -301,6 +335,14 @@ private struct ResizableColumnHeader: View {
                             dragStartWidth = nil
                         }
                 )
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active:
+                        NSCursor.resizeLeftRight.set()
+                    case .ended:
+                        NSCursor.arrow.set()
+                    }
+                }
                 .help("Drag to resize the \(title) column")
                 .accessibilityLabel("Resize \(title) column")
         }
@@ -422,7 +464,16 @@ private struct LaneCanvas: View {
                 width: radius * 2,
                 height: radius * 2
             )
-            context.fill(Path(ellipseIn: rect), with: .color(color(layout.lane)))
+            let node = Path(ellipseIn: rect)
+            if isWorkingTree {
+                context.stroke(
+                    node,
+                    with: .color(color(layout.lane)),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [3, 2])
+                )
+            } else {
+                context.fill(node, with: .color(color(layout.lane)))
+            }
             if layout.commit.isHead {
                 context.stroke(Path(ellipseIn: rect.insetBy(dx: -3, dy: -3)), with: .color(color(layout.lane)), lineWidth: 2)
             }

@@ -22,7 +22,7 @@ struct CommitGraphView: View {
     @State private var deletePresented = false
     @State private var renamedBranch = ""
     @State private var comparison: String?
-    @State private var columnWidths = CommitGraphColumnWidths()
+    @State private var columnWidths = CommitGraphColumnWidths.saved
     @AppStorage("commitDetails.panelWidth") private var commitDetailsPanelWidth = 360.0
     @GestureState private var commitDetailsPanelDragOffset: CGFloat = 0
 
@@ -61,6 +61,9 @@ struct CommitGraphView: View {
             }
         }
         .task(id: "\(repository.id)-\(reloadToken)") { await reload() }
+        .onChange(of: columnWidths) { _, newWidths in
+            newWidths.save()
+        }
         .sheet(isPresented: Binding(get: { comparison != nil }, set: { if !$0 { comparison = nil } })) {
             ComparisonView(branch: selectedBranch ?? "", diff: comparison ?? "")
                 .frame(minWidth: 760, minHeight: 560)

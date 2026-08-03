@@ -182,7 +182,6 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					2B8AA58DB9D6CF084F41D729 = {
-						DevelopmentTeam = VD7DMST4GD;
 						ProvisioningStyle = Automatic;
 					};
 					F5858BF72036972A82A6BA26 = {
@@ -441,8 +440,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = GitExplorer/GitExplorer.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				COMBINE_HIDPI_IMAGES = YES;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = VD7DMST4GD;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GitExplorer/Info.plist;
@@ -461,8 +462,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = GitExplorer/GitExplorer.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				COMBINE_HIDPI_IMAGES = YES;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = VD7DMST4GD;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GitExplorer/Info.plist;
