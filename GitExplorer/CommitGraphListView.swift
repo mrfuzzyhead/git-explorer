@@ -472,7 +472,7 @@ private struct LaneCanvas: View {
                 context.stroke(
                     node,
                     with: .color(color(layout.lane)),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [1.5, 2])
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [1, 3])
                 )
             } else {
                 context.fill(node, with: .color(color(layout.lane)))
