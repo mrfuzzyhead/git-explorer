@@ -12,28 +12,20 @@ struct RepositorySidebar: View {
             controls
             repositoryTools
             ZStack {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 4) {
-                            Color.clear
-                                .frame(height: 0)
-                                .id(RepositoryScrollAnchor.top)
-
-                            ForEach(groupedOwners, id: \.owner) { group in
-                                OwnerGroup(
-                                    owner: group.owner,
-                                    repositories: group.repositories,
-                                    isExpanded: ownerExpansionBinding(for: group.owner)
-                                )
-                            }
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(groupedOwners, id: \.owner) { group in
+                            OwnerGroup(
+                                owner: group.owner,
+                                repositories: group.repositories,
+                                isExpanded: ownerExpansionBinding(for: group.owner)
+                            )
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
                     }
-                    .onChange(of: repositoryScrollReset) {
-                        proxy.scrollTo(RepositoryScrollAnchor.top, anchor: .top)
-                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
                 }
+                .id(repositoryScrollReset)
 
                 if model.isLoading && model.repositories.isEmpty {
                     PaneLoadingView(
@@ -204,10 +196,6 @@ struct RepositorySidebar: View {
     private var isAwaitingSearchQuery: Bool {
         isSearchPresented && model.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-}
-
-private enum RepositoryScrollAnchor {
-    case top
 }
 
 private struct OwnerGroup: View {
