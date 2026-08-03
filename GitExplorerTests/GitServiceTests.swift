@@ -60,7 +60,10 @@ final class GitServiceTests: XCTestCase {
         try git(["checkout", "-b", "feature"], at: repository)
         try write("feature\n", to: repository.appendingPathComponent("feature.txt"))
         try git(["add", "."], at: repository)
-        try git(["commit", "-m", "Feature commit"], at: repository)
+        try git([
+            "commit", "-m", "Feature commit", "-m",
+            "Explain why the feature was added.\n\nInclude the implementation context."
+        ], at: repository)
         try git(["checkout", "main"], at: repository)
         try write("main\n", to: repository.appendingPathComponent("main.txt"))
         try git(["add", "."], at: repository)
@@ -88,6 +91,10 @@ final class GitServiceTests: XCTestCase {
         XCTAssertTrue(Set(firstPage.commits.map(\.id)).isDisjoint(with: secondPage.commits.map(\.id)))
 
         let feature = try XCTUnwrap(commits.first { $0.message == "Feature commit" })
+        XCTAssertEqual(
+            feature.description,
+            "Explain why the feature was added.\n\nInclude the implementation context."
+        )
         XCTAssertTrue(feature.children.contains(head.id))
         let details = try await service.details(for: feature, at: repository)
         XCTAssertTrue(details.changedFiles.contains { $0.contains("feature.txt") })
@@ -113,6 +120,7 @@ final class GitServiceTests: XCTestCase {
             author: "",
             timestamp: Date(),
             message: "Uncommitted changes",
+            description: nil,
             branches: [],
             tags: [],
             isHead: false

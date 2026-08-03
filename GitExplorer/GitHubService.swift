@@ -151,12 +151,21 @@ actor GitHubService {
         let branchName = branch ?? "HEAD"
         var commits = values.enumerated().map { index, value in
             let author = value.commit.author ?? value.commit.committer
+            let messageParts = value.commit.message.split(
+                separator: "\n",
+                maxSplits: 1,
+                omittingEmptySubsequences: false
+            )
+            let description = messageParts.dropFirst().first
+                .map(String.init)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             return GitCommit(
                 id: value.sha,
                 parents: value.parents.map(\.sha),
                 author: author?.name ?? "Unknown",
                 timestamp: author?.date ?? .distantPast,
-                message: value.commit.message.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? value.commit.message,
+                message: messageParts.first.map(String.init) ?? value.commit.message,
+                description: description?.isEmpty == false ? description : nil,
                 branches: offset == 0 && index == 0 ? [branchName] : [],
                 tags: [],
                 isHead: offset == 0 && index == 0

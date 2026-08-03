@@ -315,6 +315,7 @@ final class GitGraphLayoutTests: XCTestCase {
             author: "Test",
             timestamp: Date(timeIntervalSince1970: 0),
             message: id,
+            description: nil,
             branches: branches,
             tags: [],
             isHead: isHead

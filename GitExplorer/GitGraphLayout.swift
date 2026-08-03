@@ -148,6 +148,7 @@ enum GitGraphLayout {
             author: "",
             timestamp: Date(),
             message: "Uncommitted changes",
+            description: nil,
             branches: [],
             tags: [],
             isHead: false

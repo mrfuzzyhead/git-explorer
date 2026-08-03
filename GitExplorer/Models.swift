@@ -22,6 +22,7 @@ struct GitCommit: Identifiable, Hashable {
     let author: String
     let timestamp: Date
     let message: String
+    let description: String?
     let branches: [String]
     let tags: [String]
     let isHead: Bool

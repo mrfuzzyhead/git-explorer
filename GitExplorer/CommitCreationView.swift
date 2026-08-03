@@ -93,9 +93,27 @@ struct CommitCreationView: View {
                     Text("Commit message")
                         .font(.subheadline.weight(.semibold))
 
-                    TextField("Describe the changes", text: $message, axis: .vertical)
-                        .lineLimit(2...5)
-                        .textFieldStyle(.roundedBorder)
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $message)
+                            .scrollContentBackground(.hidden)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 11)
+                            .accessibilityLabel("Commit message")
+
+                        if message.isEmpty {
+                            Text("Describe the changes")
+                                .foregroundStyle(.tertiary)
+                                .padding(8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .frame(height: 76)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .stroke(Color(nsColor: .separatorColor))
+                    }
 
                     HStack(spacing: 12) {
                         Button {

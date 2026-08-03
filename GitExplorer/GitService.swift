@@ -181,7 +181,7 @@ actor GitService {
     }
 
     func commits(at repository: URL, limit: Int = 20_000, offset: Int = 0) throws -> [GitCommit] {
-        let format = "%H%x1f%P%x1f%an%x1f%aI%x1f%s%x1f%D%x1e"
+        let format = "%H%x1f%P%x1f%an%x1f%aI%x1f%s%x1f%b%x1f%D%x1e"
         let raw = try run([
             "-C", repository.path, "log", "--all", "--topo-order",
             "--date-order", "--skip=\(offset)", "--max-count=\(limit)",
@@ -392,8 +392,8 @@ actor GitService {
     private func parseCommit(_ record: String) -> GitCommit? {
         let fields = record.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: fieldSeparator)
-        guard fields.count >= 6 else { return nil }
-        let decorations = fields[5].split(separator: ",").map {
+        guard fields.count >= 7 else { return nil }
+        let decorations = fields[6].split(separator: ",").map {
             $0.trimmingCharacters(in: .whitespaces)
         }
         let tags = decorations.filter { $0.hasPrefix("tag: ") }.map { String($0.dropFirst(5)) }
@@ -405,12 +405,14 @@ actor GitService {
         parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let fallback = ISO8601DateFormatter()
         guard let date = parser.date(from: fields[3]) ?? fallback.date(from: fields[3]) else { return nil }
+        let description = fields[5].trimmingCharacters(in: .whitespacesAndNewlines)
         return GitCommit(
             id: fields[0],
             parents: fields[1].split(separator: " ").map(String.init),
             author: fields[2],
             timestamp: date,
             message: fields[4],
+            description: description.isEmpty ? nil : description,
             branches: branches,
             tags: tags,
             isHead: decorations.contains(where: { $0.hasPrefix("HEAD ->") || $0 == "HEAD" })

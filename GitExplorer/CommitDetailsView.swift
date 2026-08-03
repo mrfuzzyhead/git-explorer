@@ -47,6 +47,14 @@ struct CommitDetailsPanel: View {
                     .accessibilityLabel("Close commit details")
                 }
 
+                if let description = commit.description {
+                    Text(description)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+
                 if !isWorkingTree {
                     HStack(spacing: 6) {
                         Label(commit.author, systemImage: "person.circle.fill")
