@@ -88,8 +88,8 @@ private struct LocalRepositoryView: View {
     @State private var graphReloadToken = 0
 
     enum LocalTab: String, CaseIterable, Identifiable {
-        case readme = "README"
-        case graph = "Git Graph"
+        case readme = "Readme"
+        case graph = "Graph"
         case files = "Files"
         var id: Self { self }
     }
