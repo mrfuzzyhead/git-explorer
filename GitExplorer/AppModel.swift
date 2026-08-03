@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
     }
     @Published var searchText = ""
     @Published var githubToken = TokenStore.initialToken()
+    @Published var openAIAPIKey = OpenAIKeyStore.read()
     @Published var reposDirectory: URL?
     @Published var isLoading = false
     @Published var gitAvailability: GitAvailability = .checking
@@ -174,6 +175,12 @@ final class AppModel: ObservableObject {
     func githubCredentialsChanged() {
         githubAccountName = nil
         githubConnectionStatus = .notConfigured
+    }
+
+    func saveOpenAIAPIKey() {
+        let trimmed = openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        openAIAPIKey = trimmed
+        OpenAIKeyStore.save(trimmed)
     }
 
     func testGitHubConnection() async {

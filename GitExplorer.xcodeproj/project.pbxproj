@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C0DEC001C0DEC001C0DEC001 /* CommitCreationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF001C0DEF001C0DEF001 /* CommitCreationView.swift */; };
+		C0DEC002C0DEC002C0DEC002 /* CommitMessageGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF002C0DEF002C0DEF002 /* CommitMessageGenerator.swift */; };
 		12AB713735E6A9CED75898E9 /* SourceSyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6F59CBC66EC5723EA22DBF /* SourceSyntaxHighlighter.swift */; };
 		1DDBE7807A1AA8968BAC94FD /* MarkdownDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56FDE5AF2CB7C98950E44469 /* MarkdownDocumentTests.swift */; };
 		5C7DC55A0103AAB81CC4F301 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF4A0E553EBAEE0911E654EA /* Assets.xcassets */; };
@@ -44,6 +46,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C0DEF001C0DEF001C0DEF001 /* CommitCreationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitCreationView.swift; sourceTree = "<group>"; };
+		C0DEF002C0DEF002C0DEF002 /* CommitMessageGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMessageGenerator.swift; sourceTree = "<group>"; };
 		06DB667EF11CC3CC2A7FDD19 /* GitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitService.swift; sourceTree = "<group>"; };
 		08C6341903C83854CCB24F6D /* FileExplorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileExplorerTests.swift; sourceTree = "<group>"; };
 		0BE593F095D6946F261D34AA /* RepositoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryDetailView.swift; sourceTree = "<group>"; };
@@ -101,10 +105,12 @@
 				9C8D5725D0CE284B279A9D13 /* AppModel.swift */,
 				BF4A0E553EBAEE0911E654EA /* Assets.xcassets */,
 				A002A002A002A002A002A002 /* CommitComparisonView.swift */,
+				C0DEF001C0DEF001C0DEF001 /* CommitCreationView.swift */,
 				A003A003A003A003A003A003 /* CommitDetailsView.swift */,
 				A004A004A004A004A004A004 /* CommitDiffView.swift */,
 				A001A001A001A001A001A001 /* CommitGraphListView.swift */,
 				E1DE8B290DF547214601158B /* CommitGraphView.swift */,
+				C0DEF002C0DEF002C0DEF002 /* CommitMessageGenerator.swift */,
 				739327E78B38D74660EB8F92 /* ContentView.swift */,
 				BB3D3AE0A6E75F8EE204B12B /* FileBrowserView.swift */,
 				558576A0D5CAA7060632A7B3 /* GitExplorer.entitlements */,
@@ -228,10 +234,12 @@
 			files = (
 				D28C8BC1E414D5AF2DAF9F37 /* AppModel.swift in Sources */,
 				B002B002B002B002B002B002 /* CommitComparisonView.swift in Sources */,
+				C0DEC001C0DEC001C0DEC001 /* CommitCreationView.swift in Sources */,
 				B003B003B003B003B003B003 /* CommitDetailsView.swift in Sources */,
 				B004B004B004B004B004B004 /* CommitDiffView.swift in Sources */,
 				B001B001B001B001B001B001 /* CommitGraphListView.swift in Sources */,
 				5FDC245B3C2FE701F9F239D7 /* CommitGraphView.swift in Sources */,
+				C0DEC002C0DEC002C0DEC002 /* CommitMessageGenerator.swift in Sources */,
 				716720593062EEA28849C62D /* ContentView.swift in Sources */,
 				B65D4A99A6014CAC116AB579 /* FileBrowserView.swift in Sources */,
 				FCC672F8416C77ADCFF72F69 /* GitExplorerApp.swift in Sources */,

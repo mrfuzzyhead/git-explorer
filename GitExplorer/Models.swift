@@ -105,6 +105,26 @@ struct CommitDetails {
     }
 }
 
+struct WorkingTreeFile: Identifiable, Hashable {
+    enum Area: Hashable {
+        case staged
+        case unstaged
+    }
+
+    var id: String { "\(area)-\(path)" }
+    let path: String
+    let originalPath: String?
+    let status: String
+    let area: Area
+}
+
+struct WorkingTreeState: Equatable {
+    let unstaged: [WorkingTreeFile]
+    let staged: [WorkingTreeFile]
+
+    static let empty = WorkingTreeState(unstaged: [], staged: [])
+}
+
 struct RemoteFileEntry: Identifiable, Hashable {
     enum Kind: String {
         case file, directory

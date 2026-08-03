@@ -6,9 +6,11 @@ struct CommitDetailsPanel: View {
     let commit: GitCommit
     let isWorkingTree: Bool
     let onClose: () -> Void
+    var onCommit: () -> Void = {}
     @State private var details: CommitDetails?
     @State private var loadError: String?
     @State private var selectedFile: String?
+    @State private var createCommitPresented = false
     @AppStorage("commitDetails.diffPanelHeight") private var diffPanelHeight = 360.0
     @GestureState private var diffPanelDragOffset: CGFloat = 0
 
@@ -26,6 +28,14 @@ struct CommitDetailsPanel: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
+                    if isWorkingTree {
+                        Button("Create commit") {
+                            createCommitPresented = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                    }
+
                     Button(action: onClose) {
                         Image(systemName: "xmark")
                             .frame(width: 20, height: 20)
@@ -37,11 +47,7 @@ struct CommitDetailsPanel: View {
                     .accessibilityLabel("Close commit details")
                 }
 
-                if isWorkingTree {
-                    Text("Working tree")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
+                if !isWorkingTree {
                     HStack(spacing: 6) {
                         Label(commit.author, systemImage: "person.circle.fill")
                         Text("•")
@@ -104,6 +110,10 @@ struct CommitDetailsPanel: View {
             }
         }
         .background(.background)
+        .sheet(isPresented: $createCommitPresented) {
+            CommitCreationView(repository: repository, onCommitted: onCommit)
+                .environmentObject(model)
+        }
         .task(id: "\(commit.id)-\(isWorkingTree)") {
             details = nil
             loadError = nil

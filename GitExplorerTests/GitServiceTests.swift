@@ -163,6 +163,79 @@ final class GitServiceTests: XCTestCase {
         let status = try await service.status(at: checkout)
         XCTAssertEqual(status.upstream, "origin/main")
         XCTAssertEqual(status.behind, 1)
+        let pushDestination = await service.pushDestination(at: checkout)
+        XCTAssertEqual(pushDestination, "origin/main")
+    }
+
+    func testStagesUnstagesIgnoresAndCommitsWorkingTreeFiles() async throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerCommitFixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repository) }
+
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Git Explorer Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        try write("base\n", to: repository.appendingPathComponent("base.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Base"], at: repository)
+
+        try write("changed\n", to: repository.appendingPathComponent("base.txt"))
+        try write("new\n", to: repository.appendingPathComponent("new.txt"))
+        try write("ignored\n", to: repository.appendingPathComponent("ignored.txt"))
+
+        let service = GitService()
+        var state = try await service.workingTreeState(at: repository)
+        XCTAssertEqual(Set(state.unstaged.map(\.path)), ["base.txt", "ignored.txt", "new.txt"])
+        XCTAssertTrue(state.staged.isEmpty)
+
+        let filesToStage = state.unstaged.filter { $0.path == "base.txt" || $0.path == "new.txt" }
+        try await service.stage(filesToStage, at: repository)
+        state = try await service.workingTreeState(at: repository)
+        XCTAssertEqual(Set(state.staged.map(\.path)), ["base.txt", "new.txt"])
+        let stagedDiff = try await service.stagedDiff(at: repository)
+        XCTAssertTrue(stagedDiff.contains("changed"))
+
+        let newFile = try XCTUnwrap(state.staged.first { $0.path == "new.txt" })
+        try await service.unstage([newFile], at: repository)
+        state = try await service.workingTreeState(at: repository)
+        XCTAssertEqual(state.staged.map(\.path), ["base.txt"])
+        XCTAssertTrue(state.unstaged.contains { $0.path == "new.txt" })
+
+        try await service.addIgnorePatterns(["ignored.txt", "sources/*"], at: repository)
+        try await service.addIgnorePatterns(["ignored.txt"], at: repository)
+        let ignore = try String(contentsOf: repository.appendingPathComponent(".gitignore"), encoding: .utf8)
+        XCTAssertEqual(ignore.components(separatedBy: "ignored.txt").count - 1, 1)
+        XCTAssertTrue(ignore.contains("sources/*"))
+
+        try await service.commit(message: "Update base file", at: repository)
+        let commits = try await service.commits(at: repository)
+        XCTAssertEqual(commits.first?.message, "Update base file")
+        state = try await service.workingTreeState(at: repository)
+        XCTAssertFalse(state.staged.contains { $0.path == "base.txt" })
+    }
+
+    func testBuildsIgnoreMenuPatternsFromExactPathToAncestors() {
+        XCTAssertEqual(
+            CommitCreationView.ignorePatterns(for: "sources/mailpill/project.txt"),
+            ["sources/mailpill/project.txt", "sources/mailpill/*", "sources/*"]
+        )
+        XCTAssertEqual(
+            CommitCreationView.ignorePatterns(for: "a/b/c/d/e/f/g/h/file.txt").count,
+            7
+        )
+
+    }
+
+    func testCommitMessageGeneratorEnforcesSubjectBestPractices() throws {
+        let longSubject = "Add a deliberately verbose generated commit subject that runs well beyond the accepted Git subject line character limit"
+        let message = try CommitMessageGenerator.bestPracticeMessage(from: "\(longSubject).\n\nExplain the change.")
+        let subject = try XCTUnwrap(message.components(separatedBy: .newlines).first)
+        XCTAssertLessThanOrEqual(subject.count, CommitMessageGenerator.maximumSubjectCharacters)
+        XCTAssertFalse(subject.hasSuffix("."))
+        XCTAssertTrue(message.contains("\n\nExplain the change."))
+        XCTAssertEqual(try CommitMessageGenerator.bestPracticeMessage(from: "Subject: Update settings."), "Update settings")
+        XCTAssertEqual(try CommitMessageGenerator.bestPracticeMessage(from: "update settings."), "Update settings")
     }
 
     func testRepositoryStateFingerprintTracksCommitsBranchesAndWorkingTree() async throws {

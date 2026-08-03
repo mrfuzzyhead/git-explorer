@@ -296,6 +296,37 @@ enum TokenStore {
     }
 }
 
+enum OpenAIKeyStore {
+    private static let service = "net.fuzzyhead.git"
+    private static let account = "openai-api-key"
+
+    static func read() -> String {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    static func save(_ key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+        guard !key.isEmpty else { return }
+        var item = query
+        item[kSecValueData as String] = Data(key.utf8)
+        SecItemAdd(item as CFDictionary, nil)
+    }
+}
+
 #if DEBUG
 private enum DevelopmentEnvironment {
     static func githubToken() -> String {

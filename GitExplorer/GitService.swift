@@ -142,7 +142,37 @@ actor GitService {
     }
 
     func push(at repository: URL) throws {
+        let hasUpstream = (try? run([
+            "-C", repository.path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
+        ]).isEmpty == false) == true
+        if !hasUpstream,
+           let remote = firstRemote(at: repository),
+           let branch = try? run(["-C", repository.path, "branch", "--show-current"]),
+           !branch.isEmpty {
+            _ = try run(["-C", repository.path, "push", "--set-upstream", remote, branch])
+            return
+        }
         _ = try run(["-C", repository.path, "push"])
+    }
+
+    func pushDestination(at repository: URL) -> String? {
+        if let upstream = try? run([
+            "-C", repository.path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
+        ]), !upstream.isEmpty {
+            return upstream
+        }
+        guard let remote = firstRemote(at: repository) else { return nil }
+        if let branch = try? run(["-C", repository.path, "branch", "--show-current"]),
+           !branch.isEmpty {
+            return "\(remote)/\(branch)"
+        }
+        return remote
+    }
+
+    private func firstRemote(at repository: URL) -> String? {
+        guard let remotes = try? run(["-C", repository.path, "remote"]),
+              let first = remotes.split(separator: "\n").first else { return nil }
+        return String(first)
     }
 
     func sync(at repository: URL) throws {
@@ -247,6 +277,79 @@ actor GitService {
         }
 
         return CommitDetails(commit: commit, changedFiles: changedFiles, fileDiffs: fileDiffs)
+    }
+
+    func workingTreeState(at repository: URL) throws -> WorkingTreeState {
+        let rawStatus = try run([
+            "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+        ], trimmingOutput: false)
+        let changes = Self.parseWorkingTreeChanges(rawStatus)
+        var staged: [WorkingTreeFile] = []
+        var unstaged: [WorkingTreeFile] = []
+
+        for change in changes {
+            let indexStatus = change.statusCode.first
+            let workTreeStatus = change.statusCode.dropFirst().first
+            if indexStatus != " " && indexStatus != "?" {
+                staged.append(WorkingTreeFile(
+                    path: change.path,
+                    originalPath: change.originalPath,
+                    status: Self.displayStatus(for: String(indexStatus ?? "M")),
+                    area: .staged
+                ))
+            }
+            if workTreeStatus != " " || change.statusCode == "??" {
+                unstaged.append(WorkingTreeFile(
+                    path: change.path,
+                    originalPath: change.originalPath,
+                    status: Self.displayStatus(
+                        for: change.statusCode == "??" ? "??" : String(workTreeStatus ?? "M")
+                    ),
+                    area: .unstaged
+                ))
+            }
+        }
+
+        return WorkingTreeState(
+            unstaged: unstaged.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending },
+            staged: staged.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        )
+    }
+
+    func stage(_ files: [WorkingTreeFile], at repository: URL) throws {
+        let paths = Self.paths(for: files)
+        guard !paths.isEmpty else { return }
+        _ = try run(["-C", repository.path, "add", "-A", "--"] + paths)
+    }
+
+    func unstage(_ files: [WorkingTreeFile], at repository: URL) throws {
+        let paths = Self.paths(for: files)
+        guard !paths.isEmpty else { return }
+        _ = try run(["-C", repository.path, "reset", "--"] + paths)
+    }
+
+    func stagedDiff(at repository: URL) throws -> String {
+        try run(["-C", repository.path, "diff", "--cached", "--patch", "--no-ext-diff"])
+    }
+
+    func commit(message: String, at repository: URL) throws {
+        let value = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        _ = try run(["-C", repository.path, "commit", "-m", value])
+    }
+
+    func addIgnorePatterns(_ patterns: [String], at repository: URL) throws {
+        let ignoreURL = repository.appendingPathComponent(".gitignore")
+        let current = (try? String(contentsOf: ignoreURL, encoding: .utf8)) ?? ""
+        let existing = Set(current.split(separator: "\n", omittingEmptySubsequences: false).map(String.init))
+        let additions = patterns.filter { !$0.isEmpty && !existing.contains($0) }
+        guard !additions.isEmpty else { return }
+
+        var updated = current
+        if !updated.isEmpty && !updated.hasSuffix("\n") { updated.append("\n") }
+        updated.append(additions.joined(separator: "\n"))
+        updated.append("\n")
+        try updated.write(to: ignoreURL, atomically: true, encoding: .utf8)
     }
 
     func clone(remote: URL, into directory: URL, token: String?) throws {
@@ -391,6 +494,7 @@ actor GitService {
             let isRenameOrCopy = statusCode.contains("R") || statusCode.contains("C")
             let originalPath = isRenameOrCopy && index + 1 < records.count ? records[index + 1] : nil
             changes.append(WorkingTreeChange(
+                statusCode: statusCode,
                 status: displayStatus(for: statusCode),
                 path: path,
                 originalPath: originalPath,
@@ -408,6 +512,12 @@ actor GitService {
         if code.contains("R") { return "R" }
         if code.contains("C") { return "C" }
         return "M"
+    }
+
+    private static func paths(for files: [WorkingTreeFile]) -> [String] {
+        var seen: Set<String> = []
+        return files.flatMap { [$0.path, $0.originalPath].compactMap { $0 } }
+            .filter { seen.insert($0).inserted }
     }
 
     private static func repositoryName(fromRemote remote: String) -> String? {
@@ -435,6 +545,7 @@ actor GitService {
 }
 
 private struct WorkingTreeChange {
+    let statusCode: String
     let status: String
     let path: String
     let originalPath: String?

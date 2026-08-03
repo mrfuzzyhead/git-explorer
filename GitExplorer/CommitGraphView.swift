@@ -145,7 +145,11 @@ struct CommitGraphView: View {
                         repository: repository,
                         commit: selectedCommit,
                         isWorkingTree: selectedCommit.id == workingTreeLayout?.id,
-                        onClose: { self.selectedCommit = nil }
+                        onClose: { self.selectedCommit = nil },
+                        onCommit: {
+                            self.selectedCommit = nil
+                            Task { await reload(showsRefreshToast: false) }
+                        }
                     )
                     .environmentObject(model)
                     .frame(width: previewWidth)

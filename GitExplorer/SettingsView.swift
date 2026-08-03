@@ -3,6 +3,7 @@ import SwiftUI
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case git = "Git"
     case github = "GitHub"
+    case artificialIntelligence = "Artificial Intelligence"
     case locations = "Locations"
 
     var id: Self { self }
@@ -11,6 +12,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .git: "point.3.connected.trianglepath.dotted"
         case .github: "person.crop.circle"
+        case .artificialIntelligence: "sparkles"
         case .locations: "externaldrive"
         }
     }
@@ -21,6 +23,8 @@ struct SettingsView: View {
     @State private var selectedPane: SettingsPane = .git
     @State private var tokenDraft = ""
     @State private var isEditingToken = false
+    @State private var apiKeyDraft = ""
+    @State private var isEditingAPIKey = false
 
     var body: some View {
         // NavigationSplitView always reserves title-bar space above the sidebar.
@@ -83,6 +87,7 @@ struct SettingsView: View {
         switch selectedPane {
         case .git: gitPane
         case .github: githubPane
+        case .artificialIntelligence: artificialIntelligencePane
         case .locations: locationsPane
         }
     }
@@ -250,12 +255,62 @@ struct SettingsView: View {
         }
     }
 
+    private var artificialIntelligencePane: some View {
+        SettingsPage {
+            SettingsGroup("OpenAI") {
+                if isEditingAPIKey || trimmedAPIKey.isEmpty {
+                    HStack(spacing: 8) {
+                        SecureField("OpenAI API key", text: $apiKeyDraft)
+                            .textContentType(.password)
+
+                        Button("Save") {
+                            saveAPIKey()
+                        }
+                        .disabled(trimmedAPIKeyDraft.isEmpty)
+                    }
+                    .settingsRow()
+                } else {
+                    HStack(spacing: 12) {
+                        Label("Stored in Keychain (\(maskedAPIKey))", systemImage: "key.fill")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Change API Key") {
+                            apiKeyDraft = ""
+                            isEditingAPIKey = true
+                        }
+                    }
+                    .settingsRow()
+                }
+
+                Divider().padding(.horizontal, 12)
+
+                Text("The key is stored securely in your macOS Keychain and is never shown again after you save it. Git Explorer uses GPT-5.6 Luna to generate commit messages from the complete staged diff.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .settingsRow()
+            }
+        }
+    }
+
     private var trimmedToken: String {
         model.githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var trimmedTokenDraft: String {
         tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedAPIKey: String {
+        model.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedAPIKeyDraft: String {
+        apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var maskedAPIKey: String {
+        "…" + String(trimmedAPIKey.suffix(8))
     }
 
     private var maskedToken: String {
@@ -272,6 +327,13 @@ struct SettingsView: View {
         tokenDraft = ""
         isEditingToken = false
         Task { await model.saveToken() }
+    }
+
+    private func saveAPIKey() {
+        model.openAIAPIKey = trimmedAPIKeyDraft
+        apiKeyDraft = ""
+        isEditingAPIKey = false
+        model.saveOpenAIAPIKey()
     }
 }
 
