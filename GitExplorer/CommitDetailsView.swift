@@ -38,7 +38,7 @@ struct CommitDetailsPanel: View {
                 }
 
                 if isWorkingTree {
-                    Label("Working tree", systemImage: "externaldrive.fill.badge.pencil")
+                    Text("Working tree")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {

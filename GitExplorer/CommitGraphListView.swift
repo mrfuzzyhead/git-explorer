@@ -449,6 +449,7 @@ private struct WorkingTreeMetadataRow: View {
             Spacer(minLength: 8)
         }
         .font(.body)
+        .padding(.leading, 8)
         .padding(.trailing, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
