@@ -114,9 +114,27 @@ actor GitService {
         return result
     }
 
-    func fetch(at repository: URL) throws {
+    func repositoryStateFingerprint(at repository: URL) throws -> String {
+        let status = try run([
+            "-C", repository.path, "status", "--porcelain=v2", "--branch",
+            "--untracked-files=normal"
+        ])
+        let references = try run([
+            "-C", repository.path, "for-each-ref", "--sort=refname",
+            "--format=%(refname)%00%(objectname)", "refs/heads", "refs/remotes", "refs/tags"
+        ])
+        return status + "\u{1e}" + references
+    }
+
+    func fetch(at repository: URL) async throws {
         guard try hasRemotes(at: repository) else { return }
-        _ = try run(["-C", repository.path, "fetch", "--all", "--prune"])
+        let executableURL = executableURL
+        _ = try await Task.detached(priority: .utility) {
+            try Self.run(
+                ["-C", repository.path, "fetch", "--all", "--prune"],
+                executableURL: executableURL
+            )
+        }.value
     }
 
     func pull(at repository: URL) throws {
@@ -298,6 +316,22 @@ actor GitService {
 
     private func run(
         _ arguments: [String],
+        environment: [String: String] = [:],
+        allowedTerminationStatuses: Set<Int32> = [0],
+        trimmingOutput: Bool = true
+    ) throws -> String {
+        try Self.run(
+            arguments,
+            executableURL: executableURL,
+            environment: environment,
+            allowedTerminationStatuses: allowedTerminationStatuses,
+            trimmingOutput: trimmingOutput
+        )
+    }
+
+    private nonisolated static func run(
+        _ arguments: [String],
+        executableURL: URL?,
         environment: [String: String] = [:],
         allowedTerminationStatuses: Set<Int32> = [0],
         trimmingOutput: Bool = true

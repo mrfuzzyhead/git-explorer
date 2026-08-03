@@ -165,6 +165,36 @@ final class GitServiceTests: XCTestCase {
         XCTAssertEqual(status.behind, 1)
     }
 
+    func testRepositoryStateFingerprintTracksCommitsBranchesAndWorkingTree() async throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerStateFixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repository) }
+
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Git Explorer Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        try write("one\n", to: repository.appendingPathComponent("history.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "First"], at: repository)
+
+        let service = GitService()
+        let initial = try await service.repositoryStateFingerprint(at: repository)
+
+        try write("dirty\n", to: repository.appendingPathComponent("untracked.txt"))
+        let dirty = try await service.repositoryStateFingerprint(at: repository)
+        XCTAssertNotEqual(dirty, initial)
+
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Second"], at: repository)
+        let committed = try await service.repositoryStateFingerprint(at: repository)
+        XCTAssertNotEqual(committed, dirty)
+
+        try git(["branch", "feature"], at: repository)
+        let branched = try await service.repositoryStateFingerprint(at: repository)
+        XCTAssertNotEqual(branched, committed)
+    }
+
     private func write(_ contents: String, to url: URL) throws {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }

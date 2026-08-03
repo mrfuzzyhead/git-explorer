@@ -46,7 +46,7 @@ struct CommitDetailsPanel: View {
                         Label(commit.author, systemImage: "person.circle.fill")
                         Text("•")
                             .accessibilityHidden(true)
-                        Text(commit.timestamp.formatted(date: .abbreviated, time: .shortened))
+                        Text(CommitAgeFormatter.string(for: commit.timestamp))
                     }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

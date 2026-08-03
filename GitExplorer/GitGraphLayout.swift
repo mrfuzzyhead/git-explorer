@@ -81,43 +81,52 @@ enum CommitReferencePresentation {
 }
 
 enum CommitAgeFormatter {
-    static func string(for date: Date, relativeTo now: Date = Date()) -> String {
+    static func string(
+        for date: Date,
+        relativeTo now: Date = Date(),
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String {
         let elapsed = max(0, now.timeIntervalSince(date))
         let minute = 60.0
         let hour = minute * 60
-        let day = hour * 24
-        let week = day * 7
 
         if elapsed < hour {
-            return unit(max(1, Int(elapsed / minute)), singular: "min", plural: "mins")
+            return "\(max(1, Int(elapsed / minute))) mins ago"
         }
-        if elapsed < day {
-            return unit(Int(elapsed / hour), singular: "hr", plural: "hrs")
+        if calendar.isDate(date, inSameDayAs: now) {
+            return "\(Int(elapsed / hour)) hours ago"
         }
-        if elapsed < week {
-            return unit(Int(elapsed / day), singular: "day", plural: "days")
+        if isYesterday(date, relativeTo: now, calendar: calendar) {
+            return "Yesterday"
         }
-        if elapsed <= week * 4 {
-            return unit(Int(elapsed / week), singular: "wk", plural: "wks")
-        }
-
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_AU")
-        formatter.dateFormat = "d MMM yy"
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "d MMM yyyy"
         return formatter.string(from: date)
     }
 
-    static func updatedString(for date: Date, relativeTo now: Date = Date()) -> String {
-        let value = string(for: date, relativeTo: now)
-        return usesRelativeFormat(for: date, relativeTo: now) ? "\(value) ago" : value
+    static func updatedString(
+        for date: Date,
+        relativeTo now: Date = Date(),
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String {
+        string(for: date, relativeTo: now, calendar: calendar)
     }
 
-    private static func usesRelativeFormat(for date: Date, relativeTo now: Date) -> Bool {
-        max(0, now.timeIntervalSince(date)) <= 4 * 7 * 24 * 60 * 60
-    }
+    private static func isYesterday(
+        _ date: Date,
+        relativeTo now: Date,
+        calendar: Calendar
+    ) -> Bool {
+        guard let startOfYesterday = calendar.date(
+            byAdding: .day,
+            value: -1,
+            to: calendar.startOfDay(for: now)
+        ) else { return false }
 
-    private static func unit(_ value: Int, singular: String, plural: String) -> String {
-        "\(value) \(value == 1 ? singular : plural)"
+        return date >= startOfYesterday && date < calendar.startOfDay(for: now)
     }
 }
 

@@ -58,28 +58,59 @@ final class GitGraphLayoutTests: XCTestCase {
         )
     }
 
-    func testCommitAgeFormattingUsesOneLargestUnitThenCalendarDate() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func testCommitAgeFormattingUsesRelativeTimeYesterdayThenCalendarDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 5, hour: 12)
+        ))
 
-        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-5 * 60), relativeTo: now), "5 mins")
-        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-3 * 3_600), relativeTo: now), "3 hrs")
-        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-2 * 86_400), relativeTo: now), "2 days")
-        XCTAssertEqual(CommitAgeFormatter.string(for: now.addingTimeInterval(-7 * 86_400), relativeTo: now), "1 wk")
-
-        let oldDate = Calendar(identifier: .gregorian).date(
-            from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 7, day: 2)
-        )!
-        let muchLater = oldDate.addingTimeInterval(29 * 86_400)
-        XCTAssertEqual(CommitAgeFormatter.string(for: oldDate, relativeTo: muchLater), "2 Jul 26")
+        XCTAssertEqual(
+            CommitAgeFormatter.string(
+                for: now.addingTimeInterval(-5 * 60),
+                relativeTo: now,
+                calendar: calendar
+            ),
+            "5 mins ago"
+        )
+        XCTAssertEqual(
+            CommitAgeFormatter.string(
+                for: now.addingTimeInterval(-3 * 3_600),
+                relativeTo: now,
+                calendar: calendar
+            ),
+            "3 hours ago"
+        )
+        XCTAssertEqual(
+            CommitAgeFormatter.string(
+                for: try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: now)),
+                relativeTo: now,
+                calendar: calendar
+            ),
+            "Yesterday"
+        )
+        XCTAssertEqual(
+            CommitAgeFormatter.string(
+                for: try XCTUnwrap(calendar.date(
+                    from: DateComponents(year: 2026, month: 8, day: 3)
+                )),
+                relativeTo: now,
+                calendar: calendar
+            ),
+            "3 Aug 2026"
+        )
     }
 
-    func testUpdatedFormattingAddsAgoOnlyToRelativeValues() {
+    func testUpdatedFormattingUsesTheSamePresentation() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let recentDate = now.addingTimeInterval(-2 * 86_400)
-        let oldDate = now.addingTimeInterval(-29 * 86_400)
 
-        XCTAssertEqual(CommitAgeFormatter.updatedString(for: recentDate, relativeTo: now), "2 days ago")
-        XCTAssertFalse(CommitAgeFormatter.updatedString(for: oldDate, relativeTo: now).hasSuffix(" ago"))
+        XCTAssertEqual(
+            CommitAgeFormatter.updatedString(
+                for: now.addingTimeInterval(-2 * 3_600),
+                relativeTo: now
+            ),
+            "2 hours ago"
+        )
     }
 
     func testHoverEnterSelectsCommit() {

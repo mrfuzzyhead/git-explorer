@@ -15,6 +15,7 @@ struct CommitGraphView: View {
     @State private var loadingMore = false
     @State private var hasMoreCommits = false
     @State private var repositoryStatus: RepositoryStatus?
+    @State private var repositoryStateFingerprint: String?
     @State private var loadedRepositoryID: Repository.ID?
     @State private var selectedBranch: String?
     @State private var branchDialogPresented = false
@@ -60,7 +61,13 @@ struct CommitGraphView: View {
                 graphContent
             }
         }
-        .task(id: "\(repository.id)-\(reloadToken)") { await reload() }
+        .task(id: "\(repository.id)-\(reloadToken)") {
+            await reload()
+            if reloadToken == 0 {
+                await fetchRemotesAndReloadIfNeeded()
+            }
+        }
+        .task(id: repository.id) { await monitorLocalRepository() }
         .onChange(of: columnWidths) { _, newWidths in
             newWidths.save()
         }
@@ -198,8 +205,12 @@ struct CommitGraphView: View {
     }
 
     private var pageSize: Int { repository.isLocal ? 500 : 100 }
+    private var localRepositoryCheckInterval: Duration { .seconds(5) }
 
-    private func reload(showsRefreshToast: Bool = true) async {
+    private func reload(
+        showsRefreshToast: Bool = true,
+        reportsErrors: Bool = true
+    ) async {
         let hasCurrentHistory = loadedRepositoryID == repository.id &&
             (!commits.isEmpty || workingTreeLayout != nil)
         let toastID = hasCurrentHistory && showsRefreshToast
@@ -224,17 +235,15 @@ struct CommitGraphView: View {
         }
         defer { loading = false }
         if let url = repository.localURL {
-            do {
-                try await model.git.fetch(at: url)
-            } catch {
-                model.showError(error.localizedDescription, title: "Couldn’t refresh remotes")
-            }
             repositoryStatus = try? await model.git.status(at: url)
             if let repositoryStatus { onStatusChange(repositoryStatus) }
         }
         do {
             try await loadPage(offset: 0)
             loadedRepositoryID = repository.id
+            if let url = repository.localURL {
+                repositoryStateFingerprint = try? await model.git.repositoryStateFingerprint(at: url)
+            }
             if let toastID {
                 model.updateToast(
                     toastID,
@@ -255,10 +264,57 @@ struct CommitGraphView: View {
                     showsActivity: false,
                     isDismissible: true
                 )
-            } else {
+            } else if reportsErrors {
                 model.showError(error.localizedDescription, title: "Couldn’t load commit history")
             }
         }
+    }
+
+    private func monitorLocalRepository() async {
+        guard let url = repository.localURL else { return }
+
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: localRepositoryCheckInterval)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, !loading, !loadingMore else { continue }
+            guard let fingerprint = try? await model.git.repositoryStateFingerprint(at: url) else {
+                continue
+            }
+            guard let previousFingerprint = repositoryStateFingerprint else {
+                repositoryStateFingerprint = fingerprint
+                continue
+            }
+            guard fingerprint != previousFingerprint else { continue }
+            guard !loading, !loadingMore else { continue }
+
+            await reload(
+                showsRefreshToast: false,
+                reportsErrors: false
+            )
+        }
+    }
+
+    private func fetchRemotesAndReloadIfNeeded() async {
+        guard let url = repository.localURL else { return }
+
+        do {
+            try await model.git.fetch(at: url)
+        } catch {
+            guard !Task.isCancelled else { return }
+            model.showError(error.localizedDescription, title: "Couldn’t refresh remotes")
+            return
+        }
+        guard !Task.isCancelled else { return }
+
+        let fingerprint = try? await model.git.repositoryStateFingerprint(at: url)
+        guard !Task.isCancelled, fingerprint != repositoryStateFingerprint else { return }
+        await reload(
+            showsRefreshToast: false,
+            reportsErrors: false
+        )
     }
 
     private func loadMore() async {
