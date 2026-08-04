@@ -2,6 +2,16 @@ import XCTest
 @testable import GitExplorer
 
 final class GitGraphLayoutTests: XCTestCase {
+    func testActionsColumnsFillAvailableWidthAndResizeWithoutChangingTotal() {
+        let fitted = ActionsColumnWidths().fitting(totalWidth: 900)
+        XCTAssertEqual(fitted.totalWidth, 900, accuracy: 0.001)
+
+        let resized = fitted.resizing(.status, to: fitted.status + 25)
+        XCTAssertEqual(resized.status, fitted.status + 25, accuracy: 0.001)
+        XCTAssertEqual(resized.commit, fitted.commit - 25, accuracy: 0.001)
+        XCTAssertEqual(resized.totalWidth, fitted.totalWidth, accuracy: 0.001)
+    }
+
     func testGraphColumnsFillTheAvailableTableWidth() {
         let widths = CommitGraphColumnWidths(
             branchTag: 140,

@@ -38,10 +38,10 @@ struct CommitDetailsPanel: View {
 
                     Button(action: onClose) {
                         Image(systemName: "xmark")
-                            .frame(width: 20, height: 20)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Circle())
                     }
-                    .padding(4)
-                    .buttonStyle(.plain)
+                    .buttonStyle(ResponsiveButtonStyle(shape: .circle))
                     .foregroundStyle(.secondary)
                     .help("Close commit details")
                     .accessibilityLabel("Close commit details")
@@ -226,7 +226,11 @@ struct CommitDetailsPanel: View {
                                     isSelected: selection.wrappedValue == file
                                 )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ResponsiveButtonStyle(
+                                isSelected: selection.wrappedValue == file,
+                                shape: .rounded(0),
+                                selectedBackground: Color.accentColor.opacity(0.14)
+                            ))
                             Divider()
                                 .padding(.leading, 36)
                         }
@@ -308,7 +312,6 @@ private struct ChangedFileRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(presentation.label): \(change.path)")

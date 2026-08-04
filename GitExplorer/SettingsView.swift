@@ -62,14 +62,12 @@ struct SettingsView: View {
                         .padding(.vertical, 9)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ResponsiveButtonStyle(
+                    isSelected: selectedPane == pane,
+                    shape: .rounded(8),
+                    selectedBackground: .accentColor
+                ))
                 .foregroundStyle(selectedPane == pane ? .white : .primary)
-                .background {
-                    if selectedPane == pane {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.accentColor)
-                    }
-                }
                 .accessibilityAddTraits(selectedPane == pane ? .isSelected : [])
             }
 

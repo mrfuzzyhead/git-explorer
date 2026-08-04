@@ -74,13 +74,11 @@ struct RepositorySidebar: View {
                         .padding(.horizontal, 6)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .background {
-                    if !isSearchPresented && model.repositoryFilter == filter {
-                        Capsule()
-                            .fill(Color.accentColor)
-                    }
-                }
+                .buttonStyle(ResponsiveButtonStyle(
+                    isSelected: !isSearchPresented && model.repositoryFilter == filter,
+                    shape: .capsule,
+                    selectedBackground: .accentColor
+                ))
                 .foregroundStyle(
                     !isSearchPresented && model.repositoryFilter == filter ? .white : .primary
                 )
@@ -104,13 +102,11 @@ struct RepositorySidebar: View {
                     .padding(.horizontal, 6)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .background {
-                if isSearchPresented {
-                    Capsule()
-                        .fill(Color.accentColor)
-                }
-            }
+            .buttonStyle(ResponsiveButtonStyle(
+                isSelected: isSearchPresented,
+                shape: .capsule,
+                selectedBackground: .accentColor
+            ))
             .foregroundStyle(isSearchPresented ? .white : .primary)
             .accessibilityAddTraits(isSearchPresented ? .isSelected : [])
             .accessibilityLabel("Search repositories")
@@ -152,11 +148,11 @@ struct RepositorySidebar: View {
             Task { await model.refresh() }
         } label: {
             Image(systemName: "arrow.clockwise")
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
-        .frame(width: 32, height: 32)
+        .buttonStyle(ResponsiveButtonStyle(shape: .circle))
         .background(.quaternary, in: Circle())
-        .contentShape(Circle())
         .disabled(model.isLoading)
         .help("Refresh repositories")
         .accessibilityLabel("Refresh repositories")
@@ -226,7 +222,7 @@ private struct OwnerGroup: View {
                 .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ResponsiveButtonStyle())
             .accessibilityLabel(owner)
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Collapse or expand this organization")
@@ -237,11 +233,14 @@ private struct OwnerGroup: View {
                         model.selectedRepositoryID = repository.id
                     } label: {
                         RepositoryRow(
-                            repository: repository,
-                            isSelected: model.selectedRepositoryID == repository.id
+                            repository: repository
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ResponsiveButtonStyle(
+                        isSelected: model.selectedRepositoryID == repository.id,
+                        shape: .rounded(6),
+                        selectedBackground: Color.accentColor.opacity(0.18)
+                    ))
                     .accessibilityAddTraits(
                         model.selectedRepositoryID == repository.id ? .isSelected : []
                     )
@@ -253,7 +252,6 @@ private struct OwnerGroup: View {
 
 private struct RepositoryRow: View {
     let repository: Repository
-    let isSelected: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -276,10 +274,6 @@ private struct RepositoryRow: View {
         .padding(.trailing, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6)
-        )
         .contentShape(Rectangle())
     }
 }

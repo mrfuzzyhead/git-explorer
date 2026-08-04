@@ -36,6 +36,44 @@ struct GitCommitPage {
     let hasMore: Bool
 }
 
+struct GitHubWorkflowRun: Identifiable, Hashable {
+    let id: Int64
+    let workflowTitle: String
+    let commitTitle: String
+    let commitAuthor: String
+    let branch: String
+    let status: String
+    let conclusion: String?
+    let createdAt: Date
+    let startedAt: Date?
+    let updatedAt: Date
+    let webURL: URL
+
+    var isRunning: Bool { status != "completed" }
+
+    var displayStatus: GitHubWorkflowRunDisplayStatus {
+        guard status == "completed" else { return .inProgress }
+        return conclusion == "success" ? .complete : .failed
+    }
+
+    func elapsedTime(at currentDate: Date = .now) -> TimeInterval {
+        let startDate = startedAt ?? createdAt
+        let endDate = isRunning ? currentDate : updatedAt
+        return max(0, endDate.timeIntervalSince(startDate))
+    }
+}
+
+enum GitHubWorkflowRunDisplayStatus: Equatable {
+    case inProgress
+    case complete
+    case failed
+}
+
+struct GitHubWorkflowRunPage {
+    let runs: [GitHubWorkflowRun]
+    let hasMore: Bool
+}
+
 struct CommitConnection: Hashable {
     let fromLane: Int
     let toLane: Int

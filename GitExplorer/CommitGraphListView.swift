@@ -290,11 +290,13 @@ private struct CommitGraphColumnHeader: View {
     }
 }
 
-private struct ResizableColumnHeader: View {
+struct ResizableColumnHeader: View {
     let title: String
     @Binding var width: CGFloat
     let displayedWidth: CGFloat
     let minimumWidth: CGFloat
+    var leadingPadding: CGFloat = 8
+    var trailingPadding: CGFloat = 8
     @State private var dragStartWidth: CGFloat?
 
     private let resizeHandleWidth: CGFloat = 24
@@ -306,7 +308,8 @@ private struct ResizableColumnHeader: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
+                .padding(.leading, leadingPadding)
+                .padding(.trailing, trailingPadding)
 
             Rectangle()
                 .fill(.separator)
@@ -583,7 +586,11 @@ private struct BranchPill: View {
                 .background(color.opacity(0.14), in: Capsule())
                 .foregroundStyle(color)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ResponsiveButtonStyle(
+            shape: .capsule,
+            hoverBackground: color.opacity(0.12),
+            pressedScale: 0.96
+        ))
     }
 }
 

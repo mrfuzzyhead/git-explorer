@@ -82,9 +82,10 @@ private struct ToastView: View {
                     Image(systemName: "xmark")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ResponsiveButtonStyle(shape: .circle))
                 .help("Dismiss")
                 .accessibilityLabel("Dismiss notification")
             }

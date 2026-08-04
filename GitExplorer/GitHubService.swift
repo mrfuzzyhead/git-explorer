@@ -66,6 +66,31 @@ actor GitHubService {
         let size: Int
         let html_url: URL?
     }
+    private struct APIWorkflowRunsResponse: Decodable {
+        let total_count: Int
+        let workflow_runs: [APIWorkflowRun]
+    }
+    private struct APIWorkflowRun: Decodable {
+        let id: Int64
+        let name: String?
+        let display_title: String?
+        let status: String
+        let conclusion: String?
+        let head_branch: String?
+        let html_url: URL
+        let created_at: Date
+        let run_started_at: Date?
+        let updated_at: Date
+        let actor: Actor?
+        let head_commit: HeadCommit?
+
+        struct Actor: Decodable { let login: String }
+        struct HeadCommit: Decodable {
+            let message: String
+            let author: Author?
+            struct Author: Decodable { let name: String }
+        }
+    }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -128,6 +153,53 @@ actor GitHubService {
         } catch GitHubError.requestFailed(404, _) {
             return nil
         }
+    }
+
+    func workflowRunPage(
+        fullName: String,
+        offset: Int,
+        limit: Int,
+        token: String
+    ) async throws -> GitHubWorkflowRunPage {
+        let pageSize = min(max(limit, 1), 100)
+        let page = offset / pageSize + 1
+        let query = [
+            URLQueryItem(name: "per_page", value: String(pageSize)),
+            URLQueryItem(name: "page", value: String(page))
+        ]
+        let data = try await request(
+            path: "/repos/\(fullName)/actions/runs",
+            query: query,
+            token: token
+        )
+        return try workflowRunPage(from: data, offset: offset)
+    }
+
+    func workflowRunPage(from data: Data, offset: Int) throws -> GitHubWorkflowRunPage {
+        let response = try decoder.decode(APIWorkflowRunsResponse.self, from: data)
+        let runs = response.workflow_runs.map { value in
+            let commitTitle = value.head_commit?.message
+                .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+                .first
+                .map(String.init)
+            return GitHubWorkflowRun(
+                id: value.id,
+                workflowTitle: value.name ?? "GitHub Actions",
+                commitTitle: commitTitle ?? value.display_title ?? "Untitled run",
+                commitAuthor: value.head_commit?.author?.name ?? value.actor?.login ?? "Unknown",
+                branch: value.head_branch ?? "Unknown branch",
+                status: value.status,
+                conclusion: value.conclusion,
+                createdAt: value.created_at,
+                startedAt: value.run_started_at,
+                updatedAt: value.updated_at,
+                webURL: value.html_url
+            )
+        }
+        return GitHubWorkflowRunPage(
+            runs: runs,
+            hasMore: offset + runs.count < response.total_count
+        )
     }
 
     func commitPage(

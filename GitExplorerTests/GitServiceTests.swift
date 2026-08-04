@@ -2,6 +2,77 @@ import XCTest
 @testable import GitExplorer
 
 final class GitServiceTests: XCTestCase {
+    func testWorkflowRunPageMapsActionsSummaryAndPagination() async throws {
+        let data = Data(#"""
+        {
+          "total_count": 2,
+          "workflow_runs": [
+            {
+              "id": 42,
+              "name": "CI",
+              "display_title": "Fallback title",
+              "status": "in_progress",
+              "conclusion": null,
+              "head_branch": "feature/actions",
+              "html_url": "https://github.com/example/repo/actions/runs/42",
+              "created_at": "2026-08-04T01:00:00Z",
+              "run_started_at": "2026-08-04T01:01:00Z",
+              "updated_at": "2026-08-04T01:02:00Z",
+              "actor": { "login": "trigger-user" },
+              "head_commit": {
+                "message": "Add Actions tab\n\nShow workflow runs.",
+                "author": { "name": "Commit Author" }
+              }
+            }
+          ]
+        }
+        """#.utf8)
+
+        let page = try await GitHubService().workflowRunPage(from: data, offset: 0)
+        let run = try XCTUnwrap(page.runs.first)
+
+        XCTAssertEqual(run.id, 42)
+        XCTAssertEqual(run.workflowTitle, "CI")
+        XCTAssertEqual(run.commitTitle, "Add Actions tab")
+        XCTAssertEqual(run.commitAuthor, "Commit Author")
+        XCTAssertEqual(run.branch, "feature/actions")
+        XCTAssertEqual(run.displayStatus, .inProgress)
+        XCTAssertTrue(page.hasMore)
+    }
+
+    func testWorkflowRunDisplayStatusDistinguishesSuccessAndFailure() {
+        let base = GitHubWorkflowRun(
+            id: 1,
+            workflowTitle: "CI",
+            commitTitle: "Test",
+            commitAuthor: "Author",
+            branch: "main",
+            status: "completed",
+            conclusion: "success",
+            createdAt: .distantPast,
+            startedAt: .distantPast,
+            updatedAt: .now,
+            webURL: URL(string: "https://github.com/example/repo/actions/runs/1")!
+        )
+
+        XCTAssertEqual(base.displayStatus, .complete)
+        XCTAssertEqual(base.elapsedTime(), base.updatedAt.timeIntervalSince(base.startedAt!))
+        let failed = GitHubWorkflowRun(
+            id: base.id,
+            workflowTitle: base.workflowTitle,
+            commitTitle: base.commitTitle,
+            commitAuthor: base.commitAuthor,
+            branch: base.branch,
+            status: base.status,
+            conclusion: "failure",
+            createdAt: base.createdAt,
+            startedAt: base.startedAt,
+            updatedAt: base.updatedAt,
+            webURL: base.webURL
+        )
+        XCTAssertEqual(failed.displayStatus, .failed)
+    }
+
     func testGitHTTPAuthorizationHeaderUsesBasicTokenCredentials() {
         XCTAssertEqual(
             GitService.gitHTTPAuthorizationHeader(token: "test-token"),

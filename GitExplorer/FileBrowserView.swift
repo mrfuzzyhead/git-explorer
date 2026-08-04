@@ -285,14 +285,12 @@ private struct ExplorerTreeNode: View {
             .contentShape(Rectangle())
             .padding(.horizontal, 5)
             .padding(.vertical, 4)
-            .background {
-                if selection == url {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.accentColor.opacity(0.16))
-                }
-            }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ResponsiveButtonStyle(
+            isSelected: selection == url,
+            shape: .rounded(5),
+            selectedBackground: Color.accentColor.opacity(0.16)
+        ))
         .id(url)
         .help(isRepositoryRoot ? "Show repository contents" : url.isDirectory ? "Show folder contents" : "Preview file")
     }
@@ -345,9 +343,14 @@ private struct FolderPreview: View {
                                     .foregroundStyle(.tertiary)
                             }
                         }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ResponsiveButtonStyle())
+                    .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
+                    .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .help(entry.isDirectory ? "Show folder contents" : "Preview file")
                 }
@@ -654,7 +657,11 @@ private struct RemoteFileTreeNode: View {
             .padding(.vertical, 3)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ResponsiveButtonStyle(
+            isSelected: selection == entry,
+            shape: .rounded(5),
+            selectedBackground: Color.accentColor.opacity(0.16)
+        ))
     }
 
     private var expansion: Binding<Bool> {
@@ -699,9 +706,14 @@ private struct RemoteFolderPreview: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ResponsiveButtonStyle())
+                .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
+                .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             }
             .listStyle(.inset)
