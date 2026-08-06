@@ -5,12 +5,14 @@ struct CommitDetailsPanel: View {
     let repository: Repository
     let commit: GitCommit
     let isWorkingTree: Bool
+    var hasMergeConflicts = false
     let onClose: () -> Void
     var onCommit: () -> Void = {}
     @State private var details: CommitDetails?
     @State private var loadError: String?
     @State private var selectedFile: String?
     @State private var createCommitPresented = false
+    @State private var resolveConflictsPresented = false
     @AppStorage("commitDetails.diffPanelHeight") private var diffPanelHeight = 360.0
     @GestureState private var diffPanelDragOffset: CGFloat = 0
 
@@ -29,8 +31,12 @@ struct CommitDetailsPanel: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     if isWorkingTree {
-                        Button("Create commit") {
-                            createCommitPresented = true
+                        Button(hasMergeConflicts ? "Resolve conflicts" : "Create commit") {
+                            if hasMergeConflicts {
+                                resolveConflictsPresented = true
+                            } else {
+                                createCommitPresented = true
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.capsule)
@@ -120,6 +126,10 @@ struct CommitDetailsPanel: View {
         .background(.background)
         .sheet(isPresented: $createCommitPresented) {
             CommitCreationView(repository: repository, onCommitted: onCommit)
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $resolveConflictsPresented) {
+            ConflictResolutionView(repository: repository, onResolved: onCommit)
                 .environmentObject(model)
         }
         .task(id: "\(commit.id)-\(isWorkingTree)") {
@@ -286,6 +296,7 @@ private struct ChangedFileChange {
         case "d": ("Deleted", "minus.circle.fill", .red)
         case "r": ("Renamed", "arrow.right.circle.fill", .blue)
         case "c": ("Copied", "doc.on.doc.fill", .blue)
+        case "u": ("Conflict", "exclamationmark.triangle.fill", .orange)
         default: ("Modified", "pencil.circle.fill", .orange)
         }
     }

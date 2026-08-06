@@ -57,8 +57,10 @@ The app is written in SwiftUI and targets the current development Mac:
 - Highlights a commit's ancestry on hover.
 - Opens commit details with full SHA, parents, children, changed files, and
   patch output.
-- Offers branch checkout, comparison, rename, and safe deletion. Git's normal
-  merged-branch protection remains in effect.
+- Opens branch actions on right-click, with checkout, rename, create-at-commit,
+  and merge-into-recent-branch commands.
+- Detects merge conflicts, highlights conflict regions in diffs, and provides a
+  hunk-by-hunk resolver for choosing the current, incoming, or combined result.
 - Uses lazy row rendering and loads history incrementally in 500-commit pages.
 
 ## Requirements

@@ -317,7 +317,10 @@ private struct RepositoryHeader: View {
                         Label("\(status.behind)", systemImage: "arrow.down").help("Commits behind origin")
                     }
                     if status.hasChanges {
-                        Circle().fill(.orange).frame(width: 8, height: 8).help("Uncommitted changes")
+                        Circle()
+                            .fill(status.hasMergeConflicts ? .red : .orange)
+                            .frame(width: 8, height: 8)
+                            .help(status.hasMergeConflicts ? "Merge conflicts" : "Uncommitted changes")
                     }
                 }
             case .unavailable:

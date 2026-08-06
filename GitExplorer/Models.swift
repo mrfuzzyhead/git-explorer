@@ -102,6 +102,9 @@ struct RepositoryStatus: Equatable {
     var ahead = 0
     var behind = 0
     var hasChanges = false
+    var conflictedFileCount = 0
+
+    var hasMergeConflicts: Bool { conflictedFileCount > 0 }
 
     func divergence(for reference: String) -> BranchDivergence? {
         if reference == branch {
@@ -142,6 +145,33 @@ struct CommitDetails {
     var diff: String {
         changedFiles.compactMap { fileDiffs[$0] }.joined(separator: "\n\n")
     }
+}
+
+struct MergeConflictFile: Identifiable, Equatable {
+    var id: String { path }
+    let path: String
+    let hunks: [MergeConflictHunk]
+}
+
+struct MergeConflictHunk: Identifiable, Equatable {
+    let id: Int
+    let currentLabel: String
+    let incomingLabel: String
+    let current: String
+    let incoming: String
+}
+
+enum MergeConflictChoice: String, CaseIterable, Identifiable {
+    case current
+    case incoming
+    case both
+
+    var id: Self { self }
+}
+
+struct MergeConflictResolution {
+    let filePath: String
+    let choices: [Int: MergeConflictChoice]
 }
 
 struct WorkingTreeFile: Identifiable, Hashable {

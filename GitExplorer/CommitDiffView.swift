@@ -158,12 +158,38 @@ private struct DiffDocument {
             $0.hasPrefix("-") && !$0.hasPrefix("---")
         }.count
 
+        let visibleLines: ArraySlice<String>
         if let firstHunk = rawLines.firstIndex(where: { $0.hasPrefix("@@") }) {
-            lines = rawLines[firstHunk...].map(DiffLine.init)
+            visibleLines = rawLines[firstHunk...]
         } else {
             let meaningfulLines = rawLines.drop(while: Self.isPatchMetadata)
-            lines = meaningfulLines.map(DiffLine.init)
+            visibleLines = meaningfulLines
         }
+        var conflictSide: DiffLine.ConflictSide?
+        lines = visibleLines.map { rawLine in
+            let markerText = Self.markerText(in: rawLine)
+            let line = DiffLine(rawLine, conflictSide: conflictSide, isConflictMarker: markerText != nil)
+            if markerText?.hasPrefix("<<<<<<<") == true {
+                conflictSide = .current
+            } else if markerText?.hasPrefix("=======") == true {
+                conflictSide = .incoming
+            } else if markerText?.hasPrefix(">>>>>>>") == true {
+                conflictSide = nil
+            }
+            return line
+        }
+    }
+
+    private static func markerText(in line: String) -> String? {
+        let value: String
+        if let first = line.first, first == "+" || first == "-" || first == " " {
+            value = String(line.dropFirst())
+        } else {
+            value = line
+        }
+        return value.hasPrefix("<<<<<<<") || value.hasPrefix("=======") || value.hasPrefix(">>>>>>>")
+            ? value
+            : nil
     }
 
     private static func isPatchMetadata(_ line: String) -> Bool {
@@ -183,18 +209,45 @@ private struct DiffDocument {
 }
 
 private struct DiffLine {
+    enum ConflictSide {
+        case current
+        case incoming
+    }
+
     enum Kind {
         case added
         case deleted
         case hunk
         case context
+        case conflictMarker
+        case conflictCurrent
+        case conflictIncoming
     }
 
     let content: String
     let kind: Kind
 
-    init(_ rawLine: String) {
-        if rawLine.hasPrefix("+") && !rawLine.hasPrefix("+++") {
+    init(
+        _ rawLine: String,
+        conflictSide: ConflictSide? = nil,
+        isConflictMarker: Bool = false
+    ) {
+        if isConflictMarker {
+            kind = .conflictMarker
+            content = rawLine.hasPrefix("+") || rawLine.hasPrefix("-") || rawLine.hasPrefix(" ")
+                ? String(rawLine.dropFirst())
+                : rawLine
+        } else if conflictSide == .current {
+            kind = .conflictCurrent
+            content = rawLine.hasPrefix("+") || rawLine.hasPrefix("-") || rawLine.hasPrefix(" ")
+                ? String(rawLine.dropFirst())
+                : rawLine
+        } else if conflictSide == .incoming {
+            kind = .conflictIncoming
+            content = rawLine.hasPrefix("+") || rawLine.hasPrefix("-") || rawLine.hasPrefix(" ")
+                ? String(rawLine.dropFirst())
+                : rawLine
+        } else if rawLine.hasPrefix("+") && !rawLine.hasPrefix("+++") {
             kind = .added
             content = String(rawLine.dropFirst())
         } else if rawLine.hasPrefix("-") && !rawLine.hasPrefix("---") {
@@ -221,6 +274,9 @@ private struct DiffLine {
         case .added: Color.green.opacity(0.10)
         case .deleted: Color.red.opacity(0.10)
         case .hunk: Color.gray.opacity(0.12)
+        case .conflictMarker: Color.orange.opacity(0.28)
+        case .conflictCurrent: Color.blue.opacity(0.14)
+        case .conflictIncoming: Color.purple.opacity(0.14)
         case .context: .clear
         }
     }
@@ -229,6 +285,9 @@ private struct DiffLine {
         switch kind {
         case .added: Color.green.opacity(0.75)
         case .deleted: Color.red.opacity(0.75)
+        case .conflictMarker: Color.orange
+        case .conflictCurrent: Color.blue.opacity(0.8)
+        case .conflictIncoming: Color.purple.opacity(0.8)
         case .hunk, .context: .clear
         }
     }
@@ -236,7 +295,9 @@ private struct DiffLine {
     var foregroundStyle: Color {
         switch kind {
         case .hunk: Color(nsColor: .secondaryLabelColor)
-        case .added, .deleted, .context: Color(nsColor: .labelColor)
+        case .conflictMarker: .orange
+        case .added, .deleted, .context, .conflictCurrent, .conflictIncoming:
+            Color(nsColor: .labelColor)
         }
     }
 }

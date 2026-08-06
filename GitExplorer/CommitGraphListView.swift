@@ -8,7 +8,10 @@ struct CommitGraphList: View {
     @Binding var selectedCommit: GitCommit?
     let repositoryStatus: RepositoryStatus?
     let workingTreeLayout: CommitLayout?
-    let onBranchClick: (String) -> Void
+    let hasMergeConflicts: Bool
+    let recentBranches: [String]
+    let canManageBranches: Bool
+    let onBranchAction: (BranchMenuAction) -> Void
     let loadedCommitCount: Int
     let hasMoreCommits: Bool
     let loadingMore: Bool
@@ -52,8 +55,11 @@ struct CommitGraphList: View {
                             name: repositoryStatus.branch,
                             divergence: repositoryStatus.divergence(for: repositoryStatus.branch),
                             isCurrent: true,
+                            commitID: "HEAD",
+                            recentBranches: recentBranches,
+                            canManage: canManageBranches,
                             color: GraphPalette.color(for: workingTreeLayout.lane),
-                            action: onBranchClick
+                            action: onBranchAction
                         )
                     }
 
@@ -65,7 +71,7 @@ struct CommitGraphList: View {
                     )
                     .frame(width: columnWidths.graph, height: rowHeight)
 
-                    WorkingTreeMetadataRow()
+                    WorkingTreeMetadataRow(hasMergeConflicts: hasMergeConflicts)
                         .frame(width: columnWidths.message, height: rowHeight)
 
                     Color.clear.frame(width: columnWidths.user, height: rowHeight)
@@ -79,7 +85,9 @@ struct CommitGraphList: View {
                 .contentShape(Rectangle())
                 .onTapGesture { selectedCommit = workingTreeLayout.commit }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Uncommitted changes on \(repositoryStatus.branch)")
+                .accessibilityLabel(
+                    "\(hasMergeConflicts ? "Merge conflicts" : "Uncommitted changes") on \(repositoryStatus.branch)"
+                )
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAddTraits(
                     selectedCommit?.id == workingTreeLayout.id ? .isSelected : []
@@ -93,7 +101,9 @@ struct CommitGraphList: View {
                         color: GraphPalette.color(for: layout.lane),
                         repositoryStatus: repositoryStatus,
                         width: columnWidths.branchTag,
-                        onBranchClick: onBranchClick
+                        recentBranches: recentBranches,
+                        canManageBranches: canManageBranches,
+                        onBranchAction: onBranchAction
                     )
 
                     LaneCanvas(
@@ -386,7 +396,9 @@ private struct CommitReferenceColumn: View {
     let color: Color
     let repositoryStatus: RepositoryStatus?
     let width: CGFloat
-    let onBranchClick: (String) -> Void
+    let recentBranches: [String]
+    let canManageBranches: Bool
+    let onBranchAction: (BranchMenuAction) -> Void
 
     private var branches: [CommitBranchLabel] {
         CommitReferencePresentation.branchLabels(for: commit.branches)
@@ -401,8 +413,11 @@ private struct CommitReferenceColumn: View {
                     isCurrent: commit.isHead && repositoryStatus?.branch == branch.actionName,
                     includesRemote: branch.includesRemote,
                     actionName: branch.actionName,
+                    commitID: commit.id,
+                    recentBranches: recentBranches,
+                    canManage: canManageBranches,
                     color: color,
-                    action: onBranchClick
+                    action: onBranchAction
                 )
             }
             ForEach(commit.tags, id: \.self) { tag in
@@ -498,11 +513,16 @@ private struct LaneCanvas: View {
 }
 
 private struct WorkingTreeMetadataRow: View {
+    let hasMergeConflicts: Bool
+
     var body: some View {
         HStack(spacing: 8) {
-            Label("Uncommitted changes", systemImage: "pencil.and.list.clipboard")
+            Label(
+                hasMergeConflicts ? "Merge conflicts" : "Uncommitted changes",
+                systemImage: hasMergeConflicts ? "exclamationmark.triangle.fill" : "pencil.and.list.clipboard"
+            )
                 .fontWeight(.semibold)
-                .foregroundStyle(.primary)
+                .foregroundStyle(hasMergeConflicts ? Color.orange : Color.primary)
             Spacer(minLength: 8)
         }
         .font(.body)
@@ -557,41 +577,70 @@ private struct BranchPill: View {
     var isCurrent = false
     var includesRemote = false
     var actionName: String?
+    let commitID: String
+    let recentBranches: [String]
+    var canManage = false
     var color: Color = .blue
-    let action: (String) -> Void
+    let action: (BranchMenuAction) -> Void
+
+    private var branch: String { actionName ?? name }
+    private var isActionable: Bool {
+        canManage && branch != "HEAD" && branch != "Detached HEAD" && !branch.hasPrefix("origin/")
+    }
+    private var mergeTargets: [String] { recentBranches.filter { $0 != branch } }
+
     var body: some View {
-        Button { action(actionName ?? name) } label: {
-            HStack(spacing: 4) {
-                Label(
-                    name,
-                    systemImage: isCurrent || name == "HEAD" ? "location.fill" : "arrow.triangle.branch"
-                )
-                if includesRemote {
-                    Image(systemName: "icloud.fill")
-                        .help("Local and remote branch")
+        HStack(spacing: 4) {
+            Label(
+                name,
+                systemImage: isCurrent || name == "HEAD" ? "location.fill" : "arrow.triangle.branch"
+            )
+            if includesRemote {
+                Image(systemName: "icloud.fill")
+                    .help("Local and remote branch")
+            }
+            if let divergence {
+                if divergence.ahead > 0 {
+                    Text("↑\(divergence.ahead)")
+                        .help("\(divergence.ahead) commits ahead")
                 }
-                if let divergence {
-                    if divergence.ahead > 0 {
-                        Text("↑\(divergence.ahead)")
-                            .help("\(divergence.ahead) commits ahead")
-                    }
-                    if divergence.behind > 0 {
-                        Text("↓\(divergence.behind)")
-                            .help("\(divergence.behind) commits behind")
+                if divergence.behind > 0 {
+                    Text("↓\(divergence.behind)")
+                        .help("\(divergence.behind) commits behind")
+                }
+            }
+        }
+        .font(.caption2.bold())
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(color.opacity(0.14), in: Capsule())
+        .foregroundStyle(color)
+        .contextMenu {
+            if isActionable {
+                Button("Checkout") { action(.checkout(branch)) }
+                Button("Rename") { action(.rename(branch)) }
+                Button("Create branch here") {
+                    action(.createBranch(source: branch, commitID: commitID))
+                }
+                Menu("Merge into") {
+                    if mergeTargets.isEmpty {
+                        Text("No recent branches")
+                    } else {
+                        ForEach(mergeTargets, id: \.self) { target in
+                            Button(target) { action(.merge(source: branch, target: target)) }
+                        }
                     }
                 }
             }
-                .font(.caption2.bold())
-                .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(color.opacity(0.14), in: Capsule())
-                .foregroundStyle(color)
         }
-        .buttonStyle(ResponsiveButtonStyle(
-            shape: .capsule,
-            hoverBackground: color.opacity(0.12),
-            pressedScale: 0.96
-        ))
+        .help(isActionable ? "Right-click for branch actions" : name)
     }
+}
+
+enum BranchMenuAction: Equatable {
+    case checkout(String)
+    case rename(String)
+    case createBranch(source: String, commitID: String)
+    case merge(source: String, target: String)
 }
 
 private struct TagPill: View {

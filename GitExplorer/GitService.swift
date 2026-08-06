@@ -111,7 +111,15 @@ actor GitService {
                 result.hasChanges = true
             }
         }
+        result.conflictedFileCount = try conflictedPaths(at: repository).count
         return result
+    }
+
+    private func conflictedPaths(at repository: URL) throws -> [String] {
+        let output = try run([
+            "-C", repository.path, "diff", "--name-only", "-z", "--diff-filter=U"
+        ], trimmingOutput: false)
+        return output.split(separator: "\0").map(String.init)
     }
 
     func repositoryStateFingerprint(at repository: URL) throws -> String {
@@ -279,6 +287,99 @@ actor GitService {
         return CommitDetails(commit: commit, changedFiles: changedFiles, fileDiffs: fileDiffs)
     }
 
+    func mergeConflicts(at repository: URL) throws -> [MergeConflictFile] {
+        try conflictedPaths(at: repository).map { path in
+            let contents = (try? String(
+                contentsOf: repository.appendingPathComponent(path),
+                encoding: .utf8
+            )) ?? ""
+            let parsed = Self.parseMergeConflict(path: path, contents: contents)
+            guard parsed.hunks.isEmpty else { return parsed }
+
+            let current = conflictStageContent(2, path: path, at: repository)
+            let incoming = conflictStageContent(3, path: path, at: repository)
+            return MergeConflictFile(path: path, hunks: [MergeConflictHunk(
+                id: 0,
+                currentLabel: current == nil ? "Current (deleted)" : "Current",
+                incomingLabel: incoming == nil ? "Incoming (deleted)" : "Incoming",
+                current: current ?? "",
+                incoming: incoming ?? ""
+            )])
+        }
+    }
+
+    private func conflictStageContent(_ stage: Int, path: String, at repository: URL) -> String? {
+        try? run(["-C", repository.path, "show", ":\(stage):\(path)"], trimmingOutput: false)
+    }
+
+    func resolveMergeConflicts(
+        _ resolutions: [MergeConflictResolution],
+        at repository: URL
+    ) throws {
+        for resolution in resolutions {
+            let fileURL = repository.appendingPathComponent(resolution.filePath)
+            let contents = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+            let document = Self.parseConflictDocument(contents)
+            let expectedChoiceCount = max(1, document.conflictCount)
+            guard expectedChoiceCount == resolution.choices.count else {
+                throw GitServiceError.failed(
+                    arguments: ["resolve", resolution.filePath],
+                    message: "Choose a resolution for every conflict hunk."
+                )
+            }
+            if document.conflictCount > 0 {
+                let resolved = try document.render(choices: resolution.choices)
+                try resolved.write(to: fileURL, atomically: true, encoding: .utf8)
+            } else {
+                let current = conflictStageContent(2, path: resolution.filePath, at: repository)
+                let incoming = conflictStageContent(3, path: resolution.filePath, at: repository)
+                guard let choice = resolution.choices[0] else {
+                    throw GitServiceError.failed(
+                        arguments: ["resolve", resolution.filePath],
+                        message: "Choose a resolution for every conflict hunk."
+                    )
+                }
+                let resolved: String?
+                switch choice {
+                case .current: resolved = current
+                case .incoming: resolved = incoming
+                case .both: resolved = [current, incoming].compactMap { $0 }.joined()
+                }
+                if let resolved {
+                    try resolved.write(to: fileURL, atomically: true, encoding: .utf8)
+                } else if FileManager.default.fileExists(atPath: fileURL.path) {
+                    try FileManager.default.removeItem(at: fileURL)
+                }
+            }
+        }
+        let paths = resolutions.map(\.filePath)
+        guard !paths.isEmpty else { return }
+        _ = try run(["-C", repository.path, "add", "--"] + paths)
+    }
+
+    static func parseMergeConflict(path: String, contents: String) -> MergeConflictFile {
+        let document = parseConflictDocument(contents)
+        var conflictIndex = 0
+        let hunks = document.segments.compactMap { segment -> MergeConflictHunk? in
+            guard case let .conflict(currentLabel, incomingLabel, current, incoming) = segment else {
+                return nil
+            }
+            defer { conflictIndex += 1 }
+            return MergeConflictHunk(
+                id: conflictIndex,
+                currentLabel: currentLabel,
+                incomingLabel: incomingLabel,
+                current: current.joined(separator: "\n"),
+                incoming: incoming.joined(separator: "\n")
+            )
+        }
+        return MergeConflictFile(path: path, hunks: hunks)
+    }
+
+    private static func parseConflictDocument(_ contents: String) -> ConflictDocument {
+        ConflictDocument(contents: contents)
+    }
+
     func workingTreeState(at repository: URL) throws -> WorkingTreeState {
         let rawStatus = try run([
             "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all"
@@ -371,6 +472,23 @@ actor GitService {
 
     func checkout(branch: String, at repository: URL) throws {
         _ = try run(["-C", repository.path, "checkout", branch])
+    }
+
+    func recentBranches(at repository: URL, limit: Int = 8) throws -> [String] {
+        let output = try run([
+            "-C", repository.path, "for-each-ref", "--sort=-committerdate",
+            "--format=%(refname:short)", "refs/heads"
+        ])
+        return output.split(separator: "\n").prefix(limit).map(String.init)
+    }
+
+    func createBranch(_ branch: String, at commit: String, in repository: URL) throws {
+        _ = try run(["-C", repository.path, "branch", branch, commit])
+    }
+
+    func merge(branch source: String, into target: String, at repository: URL) throws {
+        _ = try run(["-C", repository.path, "checkout", target])
+        _ = try run(["-C", repository.path, "merge", source])
     }
 
     func delete(branch: String, at repository: URL) throws {
@@ -543,6 +661,123 @@ actor GitService {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+private struct ConflictDocument {
+    enum Segment {
+        case text([String])
+        case conflict(
+            currentLabel: String,
+            incomingLabel: String,
+            current: [String],
+            incoming: [String]
+        )
+    }
+
+    let segments: [Segment]
+
+    var conflictCount: Int {
+        segments.reduce(0) { count, segment in
+            if case .conflict = segment { return count + 1 }
+            return count
+        }
+    }
+
+    init(contents: String) {
+        let lines = contents.components(separatedBy: "\n")
+        var parsed: [Segment] = []
+        var text: [String] = []
+        var index = 0
+
+        func markerLabel(_ line: String, marker: String) -> String {
+            line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
+        }
+
+        while index < lines.count {
+            guard lines[index].hasPrefix("<<<<<<<") else {
+                text.append(lines[index])
+                index += 1
+                continue
+            }
+
+            let startIndex = index
+            let currentLabel = markerLabel(lines[index], marker: "<<<<<<<")
+            index += 1
+            var current: [String] = []
+            while index < lines.count,
+                  !lines[index].hasPrefix("======="),
+                  !lines[index].hasPrefix("|||||||") {
+                current.append(lines[index])
+                index += 1
+            }
+
+            if index < lines.count, lines[index].hasPrefix("|||||||") {
+                index += 1
+                while index < lines.count, !lines[index].hasPrefix("=======") {
+                    index += 1
+                }
+            }
+
+            guard index < lines.count, lines[index].hasPrefix("=======") else {
+                text.append(contentsOf: lines[startIndex...])
+                break
+            }
+            index += 1
+
+            var incoming: [String] = []
+            while index < lines.count, !lines[index].hasPrefix(">>>>>>>") {
+                incoming.append(lines[index])
+                index += 1
+            }
+            guard index < lines.count else {
+                text.append(contentsOf: lines[startIndex...])
+                break
+            }
+            let incomingLabel = markerLabel(lines[index], marker: ">>>>>>>")
+            index += 1
+
+            if !text.isEmpty {
+                parsed.append(.text(text))
+                text = []
+            }
+            parsed.append(.conflict(
+                currentLabel: currentLabel.isEmpty ? "Current" : currentLabel,
+                incomingLabel: incomingLabel.isEmpty ? "Incoming" : incomingLabel,
+                current: current,
+                incoming: incoming
+            ))
+        }
+
+        if !text.isEmpty { parsed.append(.text(text)) }
+        segments = parsed
+    }
+
+    func render(choices: [Int: MergeConflictChoice]) throws -> String {
+        var lines: [String] = []
+        var conflictIndex = 0
+        for segment in segments {
+            switch segment {
+            case let .text(value):
+                lines.append(contentsOf: value)
+            case let .conflict(_, _, current, incoming):
+                guard let choice = choices[conflictIndex] else {
+                    throw GitServiceError.failed(
+                        arguments: ["resolve"],
+                        message: "Choose a resolution for every conflict hunk."
+                    )
+                }
+                switch choice {
+                case .current: lines.append(contentsOf: current)
+                case .incoming: lines.append(contentsOf: incoming)
+                case .both:
+                    lines.append(contentsOf: current)
+                    lines.append(contentsOf: incoming)
+                }
+                conflictIndex += 1
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 

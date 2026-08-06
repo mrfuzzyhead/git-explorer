@@ -18,11 +18,12 @@ struct CommitGraphView: View {
     @State private var repositoryStateFingerprint: String?
     @State private var loadedRepositoryID: Repository.ID?
     @State private var selectedBranch: String?
-    @State private var branchDialogPresented = false
+    @State private var selectedCommitID: String?
+    @State private var recentBranches: [String] = []
     @State private var renamePresented = false
-    @State private var deletePresented = false
+    @State private var createBranchPresented = false
     @State private var renamedBranch = ""
-    @State private var comparison: String?
+    @State private var newBranchName = ""
     @State private var columnWidths = CommitGraphColumnWidths.saved
     @AppStorage("commitDetails.panelWidth") private var commitDetailsPanelWidth = 360.0
     @GestureState private var commitDetailsPanelDragOffset: CGFloat = 0
@@ -71,36 +72,17 @@ struct CommitGraphView: View {
         .onChange(of: columnWidths) { _, newWidths in
             newWidths.save()
         }
-        .sheet(isPresented: Binding(get: { comparison != nil }, set: { if !$0 { comparison = nil } })) {
-            ComparisonView(branch: selectedBranch ?? "", diff: comparison ?? "")
-                .frame(minWidth: 760, minHeight: 560)
-        }
-        .confirmationDialog(
-            "Branch \(selectedBranch ?? "")",
-            isPresented: $branchDialogPresented,
-            titleVisibility: .visible
-        ) {
-            Button("Checkout") { performBranchAction(.checkout) }
-            Button("Compare with HEAD") { performBranchAction(.compare) }
-            Button("Rename…") {
-                renamedBranch = selectedBranch ?? ""
-                renamePresented = true
-            }
-            Button("Delete…", role: .destructive) { deletePresented = true }
-        }
         .alert("Rename Branch", isPresented: $renamePresented) {
             TextField("New branch name", text: $renamedBranch)
             Button("Cancel", role: .cancel) {}
             Button("Rename") { performBranchAction(.rename(renamedBranch)) }
         }
-        .confirmationDialog(
-            "Delete \(selectedBranch ?? "")?",
-            isPresented: $deletePresented,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Branch", role: .destructive) { performBranchAction(.delete) }
+        .alert("Create Branch", isPresented: $createBranchPresented) {
+            TextField("Branch name", text: $newBranchName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") { performBranchAction(.create(newBranchName, selectedCommitID ?? "HEAD")) }
         } message: {
-            Text("Git will refuse to delete a branch whose work has not been merged.")
+            Text("Create a branch at the selected point in the graph.")
         }
     }
 
@@ -112,7 +94,10 @@ struct CommitGraphView: View {
             selectedCommit: $selectedCommit,
             repositoryStatus: repositoryStatus,
             workingTreeLayout: workingTreeLayout,
-            onBranchClick: openBranchActions,
+            hasMergeConflicts: repositoryStatus?.hasMergeConflicts == true,
+            recentBranches: recentBranches,
+            canManageBranches: repository.localURL != nil,
+            onBranchAction: handleBranchMenuAction,
             loadedCommitCount: commits.count,
             hasMoreCommits: hasMoreCommits,
             loadingMore: loadingMore,
@@ -145,6 +130,7 @@ struct CommitGraphView: View {
                         repository: repository,
                         commit: selectedCommit,
                         isWorkingTree: selectedCommit.id == workingTreeLayout?.id,
+                        hasMergeConflicts: repositoryStatus?.hasMergeConflicts == true,
                         onClose: { self.selectedCommit = nil },
                         onCommit: {
                             self.selectedCommit = nil
@@ -240,6 +226,7 @@ struct CommitGraphView: View {
         defer { loading = false }
         if let url = repository.localURL {
             repositoryStatus = try? await model.git.status(at: url)
+            recentBranches = (try? await model.git.recentBranches(at: url)) ?? []
             if let repositoryStatus { onStatusChange(repositoryStatus) }
         }
         do {
@@ -349,10 +336,12 @@ struct CommitGraphView: View {
         let combined = offset == 0 ? page.commits : commits + page.commits
         let linkedCommits = Self.linkingChildren(in: combined)
         let hasUncommittedChanges = repositoryStatus?.hasChanges == true
+        let hasMergeConflicts = repositoryStatus?.hasMergeConflicts == true
         let graphLayout = await Task.detached(priority: .userInitiated) {
             GitGraphLayout.makeRepositoryLayout(
                 commits: linkedCommits,
-                hasUncommittedChanges: hasUncommittedChanges
+                hasUncommittedChanges: hasUncommittedChanges,
+                hasMergeConflicts: hasMergeConflicts
             )
         }.value
         guard !Task.isCancelled else { return }
@@ -376,13 +365,24 @@ struct CommitGraphView: View {
         return result
     }
 
-    private func openBranchActions(_ branch: String) {
-        guard repository.localURL != nil,
-              branch != "HEAD",
-              branch != "Detached HEAD",
-              !branch.hasPrefix("origin/") else { return }
-        selectedBranch = branch
-        branchDialogPresented = true
+    private func handleBranchMenuAction(_ action: BranchMenuAction) {
+        switch action {
+        case let .checkout(branch):
+            selectedBranch = branch
+            performBranchAction(.checkout)
+        case let .rename(branch):
+            selectedBranch = branch
+            renamedBranch = branch
+            renamePresented = true
+        case let .createBranch(source, commitID):
+            selectedBranch = source
+            selectedCommitID = commitID
+            newBranchName = ""
+            createBranchPresented = true
+        case let .merge(source, target):
+            selectedBranch = source
+            performBranchAction(.merge(target: target))
+        }
     }
 
     private func performBranchAction(_ action: BranchAction) {
@@ -397,10 +397,12 @@ struct CommitGraphView: View {
             do {
                 switch action {
                 case .checkout: try await model.git.checkout(branch: branch, at: url)
-                case .compare: comparison = try await model.git.compare(branch: branch, at: url)
-                case .delete: try await model.git.delete(branch: branch, at: url)
                 case let .rename(newName):
                     try await model.git.rename(branch: branch, to: newName, at: url)
+                case let .create(newName, commitID):
+                    try await model.git.createBranch(newName, at: commitID, in: url)
+                case let .merge(target):
+                    try await model.git.merge(branch: branch, into: target, at: url)
                 }
                 if action.requiresReload {
                     await reload(showsRefreshToast: false)
@@ -414,6 +416,20 @@ struct CommitGraphView: View {
                     isDismissible: true
                 )
             } catch {
+                if case .merge = action,
+                   let status = try? await model.git.status(at: url),
+                   status.hasMergeConflicts {
+                    await reload(showsRefreshToast: false, reportsErrors: false)
+                    model.updateToast(
+                        toastID,
+                        title: "There were merge conflicts",
+                        message: "\(status.conflictedFileCount) \(status.conflictedFileCount == 1 ? "file needs" : "files need") resolution.",
+                        style: .warning,
+                        showsActivity: false,
+                        isDismissible: true
+                    )
+                    return
+                }
                 model.updateToast(
                     toastID,
                     title: action.failureTitle,
@@ -428,35 +444,33 @@ struct CommitGraphView: View {
 }
 
 private enum BranchAction {
-    case checkout, compare, delete, rename(String)
-    var requiresReload: Bool {
-        switch self { case .compare: false; default: true }
-    }
+    case checkout, rename(String), create(String, String), merge(target: String)
+    var requiresReload: Bool { true }
 
     func progressTitle(for branch: String) -> String {
         switch self {
         case .checkout: "Checking out \(branch)…"
-        case .compare: "Comparing \(branch)…"
-        case .delete: "Deleting \(branch)…"
         case .rename: "Renaming \(branch)…"
+        case .create: "Creating branch…"
+        case let .merge(target): "Merging \(branch) into \(target)…"
         }
     }
 
     var successTitle: String {
         switch self {
         case .checkout: "Checkout complete"
-        case .compare: "Comparison ready"
-        case .delete: "Branch deleted"
         case .rename: "Branch renamed"
+        case .create: "Branch created"
+        case .merge: "Merge complete"
         }
     }
 
     var failureTitle: String {
         switch self {
         case .checkout: "Checkout failed"
-        case .compare: "Comparison failed"
-        case .delete: "Delete failed"
         case .rename: "Rename failed"
+        case .create: "Create branch failed"
+        case .merge: "Merge failed"
         }
     }
 }

@@ -3,12 +3,14 @@ import SwiftUI
 enum AppToastStyle: Equatable {
     case information
     case success
+    case warning
     case error
 
     var icon: String {
         switch self {
         case .information: "info.circle.fill"
         case .success: "checkmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
         case .error: "exclamationmark.triangle.fill"
         }
     }
@@ -17,6 +19,7 @@ enum AppToastStyle: Equatable {
         switch self {
         case .information: .accentColor
         case .success: .green
+        case .warning: .orange
         case .error: .red
         }
     }

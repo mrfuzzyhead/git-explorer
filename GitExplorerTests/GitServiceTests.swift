@@ -347,6 +347,96 @@ final class GitServiceTests: XCTestCase {
         XCTAssertNotEqual(branched, committed)
     }
 
+    func testBranchContextMenuOperationsCreateAndMergeBranches() async throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerBranchActionsFixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repository) }
+
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Git Explorer Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        try write("base\n", to: repository.appendingPathComponent("history.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Base"], at: repository)
+        let baseCommit = try git(["rev-parse", "HEAD"], at: repository)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let service = GitService()
+        try await service.createBranch("feature", at: baseCommit, in: repository)
+        try await service.checkout(branch: "feature", at: repository)
+        try write("feature\n", to: repository.appendingPathComponent("feature.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Feature"], at: repository)
+
+        let recentBranches = try await service.recentBranches(at: repository)
+        XCTAssertEqual(Set(recentBranches), Set(["main", "feature"]))
+
+        try await service.merge(branch: "feature", into: "main", at: repository)
+        XCTAssertEqual(
+            try git(["branch", "--show-current"], at: repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "main"
+        )
+        XCTAssertEqual(
+            try git(["rev-parse", "main"], at: repository),
+            try git(["rev-parse", "feature"], at: repository)
+        )
+    }
+
+    func testMergeConflictsAreDetectedParsedAndResolvedByHunk() async throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerConflictFixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repository) }
+
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Git Explorer Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        try write("heading\nbase value\nending\n", to: repository.appendingPathComponent("conflict.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Base"], at: repository)
+        try git(["checkout", "-b", "feature"], at: repository)
+        try write("heading\nincoming value\nending\n", to: repository.appendingPathComponent("conflict.txt"))
+        try git(["commit", "-am", "Feature"], at: repository)
+        try git(["checkout", "main"], at: repository)
+        try write("heading\ncurrent value\nending\n", to: repository.appendingPathComponent("conflict.txt"))
+        try git(["commit", "-am", "Main"], at: repository)
+
+        let service = GitService()
+        do {
+            try await service.merge(branch: "feature", into: "main", at: repository)
+            XCTFail("Expected the merge to conflict")
+        } catch {}
+
+        let status = try await service.status(at: repository)
+        XCTAssertTrue(status.hasChanges)
+        XCTAssertTrue(status.hasMergeConflicts)
+        XCTAssertEqual(status.conflictedFileCount, 1)
+
+        let conflicts = try await service.mergeConflicts(at: repository)
+        let file = try XCTUnwrap(conflicts.first)
+        let hunk = try XCTUnwrap(file.hunks.first)
+        XCTAssertEqual(file.path, "conflict.txt")
+        XCTAssertEqual(hunk.current, "current value")
+        XCTAssertEqual(hunk.incoming, "incoming value")
+
+        try await service.resolveMergeConflicts([
+            MergeConflictResolution(filePath: file.path, choices: [hunk.id: .incoming])
+        ], at: repository)
+        let resolvedStatus = try await service.status(at: repository)
+        XCTAssertFalse(resolvedStatus.hasMergeConflicts)
+        XCTAssertEqual(
+            try String(contentsOf: repository.appendingPathComponent("conflict.txt"), encoding: .utf8),
+            "heading\nincoming value\nending\n"
+        )
+        XCTAssertEqual(
+            try git(["diff", "--name-only", "--cached"], at: repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "conflict.txt"
+        )
+    }
+
     private func write(_ contents: String, to url: URL) throws {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }

@@ -135,7 +135,8 @@ enum GitGraphLayout {
 
     static func makeRepositoryLayout(
         commits: [GitCommit],
-        hasUncommittedChanges: Bool
+        hasUncommittedChanges: Bool,
+        hasMergeConflicts: Bool = false
     ) -> RepositoryGraphLayout {
         guard hasUncommittedChanges else {
             return RepositoryGraphLayout(workingTree: nil, commits: make(commits: commits))
@@ -147,7 +148,7 @@ enum GitGraphLayout {
             parents: headID.map { [$0] } ?? [],
             author: "",
             timestamp: Date(),
-            message: "Uncommitted changes",
+            message: hasMergeConflicts ? "Merge conflicts" : "Uncommitted changes",
             description: nil,
             branches: [],
             tags: [],
