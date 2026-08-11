@@ -71,9 +71,9 @@ private struct RemoteRepositoryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task {
             defer { loading = false }
-            guard !model.githubToken.isEmpty else { return }
+            guard !model.token(for: repository).isEmpty else { return }
             do {
-                readme = try await model.github.readme(fullName: repository.fullName, token: model.githubToken)
+                readme = try await model.remoteReadme(for: repository)
             } catch {
                 model.showError(error.localizedDescription, title: "Couldn’t load README")
             }
@@ -421,23 +421,20 @@ private struct RepositoryActionsView: View {
 
     var body: some View {
         Group {
-            if model.githubToken.isEmpty {
+            if model.token(for: repository).isEmpty {
                 ContentUnavailableView(
-                    "GitHub Token Required",
+                    "Account Required",
                     systemImage: "key",
-                    description: Text("Add a GitHub token in Settings to view Actions runs.")
-                )
-            } else if repository.webURL?.host?.lowercased() != "github.com" {
-                ContentUnavailableView(
-                    "GitHub Repository Required",
-                    systemImage: "bolt.slash",
-                    description: Text("Actions are available for repositories connected to GitHub.")
+                    description: Text("Connect this repository's account in Settings to view automation runs.")
                 )
             } else if loading, runs.isEmpty {
-                PaneLoadingView("Loading Actions…")
+                PaneLoadingView(repository.provider == .azureDevOps ? "Loading Pipelines…" : "Loading Actions…")
             } else if let loadError, runs.isEmpty {
                 ContentUnavailableView {
-                    Label("Couldn’t Load Actions", systemImage: "exclamationmark.triangle")
+                    Label(
+                        repository.provider == .azureDevOps ? "Couldn’t Load Pipelines" : "Couldn’t Load Actions",
+                        systemImage: "exclamationmark.triangle"
+                    )
                 } description: {
                     Text(loadError)
                 } actions: {
@@ -445,9 +442,13 @@ private struct RepositoryActionsView: View {
                 }
             } else if runs.isEmpty {
                 ContentUnavailableView(
-                    "No Actions Runs",
+                    repository.provider == .azureDevOps ? "No Pipeline Runs" : "No Actions Runs",
                     systemImage: "bolt",
-                    description: Text("This repository has no GitHub Actions workflow runs.")
+                    description: Text(
+                        repository.provider == .azureDevOps
+                            ? "This repository has no Azure Pipelines runs."
+                            : "This repository has no GitHub Actions workflow runs."
+                    )
                 )
             } else {
                 actionsList
@@ -508,8 +509,7 @@ private struct RepositoryActionsView: View {
     }
 
     private func reload() async {
-        guard !model.githubToken.isEmpty,
-              repository.webURL?.host?.lowercased() == "github.com" else {
+        guard !model.token(for: repository).isEmpty else {
             loading = false
             return
         }
@@ -541,7 +541,12 @@ private struct RepositoryActionsView: View {
         } catch is CancellationError {
             return
         } catch {
-            model.showError(error.localizedDescription, title: "Couldn’t load more Actions runs")
+            model.showError(
+                error.localizedDescription,
+                title: repository.provider == .azureDevOps
+                    ? "Couldn’t load more pipeline runs"
+                    : "Couldn’t load more Actions runs"
+            )
         }
     }
 
@@ -565,11 +570,10 @@ private struct RepositoryActionsView: View {
     }
 
     private func fetchPage(offset: Int) async throws -> GitHubWorkflowRunPage {
-        try await model.github.workflowRunPage(
-            fullName: repository.fullName,
+        try await model.remoteWorkflowRunPage(
+            for: repository,
             offset: offset,
-            limit: pageSize,
-            token: model.githubToken
+            limit: pageSize
         )
     }
 }

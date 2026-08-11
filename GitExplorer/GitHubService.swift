@@ -377,6 +377,54 @@ enum TokenStore {
     }
 }
 
+enum SourceControlAccountStore {
+    private static let defaultsKey = "sourceControlAccounts.v1"
+    private static let service = "net.fuzzyhead.git.source-control"
+
+    static func load(defaults: UserDefaults = .standard) -> [SourceControlAccount] {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let accounts = try? JSONDecoder().decode([SourceControlAccount].self, from: data) else {
+            return []
+        }
+        return accounts
+    }
+
+    static func save(_ accounts: [SourceControlAccount], defaults: UserDefaults = .standard) {
+        guard let data = try? JSONEncoder().encode(accounts) else { return }
+        defaults.set(data, forKey: defaultsKey)
+    }
+
+    static func token(for accountID: UUID) -> String {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: accountID.uuidString,
+            kSecReturnData as String: true
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    static func saveToken(_ token: String, for accountID: UUID) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: accountID.uuidString
+        ]
+        SecItemDelete(query as CFDictionary)
+        guard !token.isEmpty else { return }
+        var item = query
+        item[kSecValueData as String] = Data(token.utf8)
+        SecItemAdd(item as CFDictionary, nil)
+    }
+
+    static func remove(_ accountID: UUID) {
+        saveToken("", for: accountID)
+    }
+}
+
 enum OpenAIKeyStore {
     private static let service = "net.fuzzyhead.git"
     private static let account = "openai-api-key"

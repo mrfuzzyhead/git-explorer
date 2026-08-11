@@ -39,7 +39,7 @@ struct RepositorySidebar: View {
                         ContentUnavailableView(
                             "No Repositories",
                             systemImage: "externaldrive.badge.questionmark",
-                            description: Text("Choose a repositories folder or connect GitHub in Settings.")
+                            description: Text("Choose a repositories folder or connect an account in Settings.")
                         )
                     } else {
                         ContentUnavailableView.search(text: model.searchText)

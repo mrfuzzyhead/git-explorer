@@ -436,23 +436,30 @@ private struct LaneCanvas: View {
         Canvas { context, size in
             let centerY = size.height / 2
             let radius: CGFloat = isWorkingTree ? 8 : 5
+            let topEdge: CGFloat = -1
+            let bottomEdge = size.height + 1
+            let connectorStyle = StrokeStyle(
+                lineWidth: 2.5,
+                lineCap: .round,
+                lineJoin: .round
+            )
             for lane in layout.passThroughLanes {
                 var path = Path()
-                path.move(to: CGPoint(x: x(lane), y: 0))
-                path.addLine(to: CGPoint(x: x(lane), y: size.height))
-                context.stroke(path, with: .color(color(lane)), lineWidth: 2.5)
+                path.move(to: CGPoint(x: x(lane), y: topEdge))
+                path.addLine(to: CGPoint(x: x(lane), y: bottomEdge))
+                context.stroke(path, with: .color(color(lane)), style: connectorStyle)
             }
 
             if layout.hasIncomingConnection {
                 var incoming = Path()
-                incoming.move(to: CGPoint(x: x(layout.lane), y: 0))
+                incoming.move(to: CGPoint(x: x(layout.lane), y: topEdge))
                 incoming.addLine(to: CGPoint(x: x(layout.lane), y: centerY))
-                context.stroke(incoming, with: .color(color(layout.lane)), lineWidth: 2.5)
+                context.stroke(incoming, with: .color(color(layout.lane)), style: connectorStyle)
             }
 
             for connection in layout.incomingConnections {
                 var path = Path()
-                let start = CGPoint(x: x(connection.fromLane), y: 0)
+                let start = CGPoint(x: x(connection.fromLane), y: topEdge)
                 let end = CGPoint(x: x(connection.toLane), y: centerY)
                 path.move(to: start)
                 path.addCurve(
@@ -460,7 +467,7 @@ private struct LaneCanvas: View {
                     control1: CGPoint(x: start.x, y: size.height * 0.28),
                     control2: CGPoint(x: end.x, y: centerY - size.height * 0.28)
                 )
-                context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
+                context.stroke(path, with: .color(color(connection.colorLane)), style: connectorStyle)
             }
 
             for connection in layout.connections {
@@ -469,14 +476,14 @@ private struct LaneCanvas: View {
                     ? centerY + radius
                     : centerY
                 let start = CGPoint(x: x(connection.fromLane), y: startY)
-                let end = CGPoint(x: x(connection.toLane), y: size.height)
+                let end = CGPoint(x: x(connection.toLane), y: bottomEdge)
                 path.move(to: start)
                 path.addCurve(
                     to: end,
                     control1: CGPoint(x: start.x, y: centerY + size.height * 0.28),
                     control2: CGPoint(x: end.x, y: size.height * 0.72)
                 )
-                context.stroke(path, with: .color(color(connection.colorLane)), lineWidth: 2.5)
+                context.stroke(path, with: .color(color(connection.colorLane)), style: connectorStyle)
             }
 
             let rect = CGRect(

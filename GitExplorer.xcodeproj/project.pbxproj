@@ -11,6 +11,7 @@
 		C0DEC002C0DEC002C0DEC002 /* CommitMessageGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF002C0DEF002C0DEF002 /* CommitMessageGenerator.swift */; };
 		12AB713735E6A9CED75898E9 /* SourceSyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6F59CBC66EC5723EA22DBF /* SourceSyntaxHighlighter.swift */; };
 		1DDBE7807A1AA8968BAC94FD /* MarkdownDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56FDE5AF2CB7C98950E44469 /* MarkdownDocumentTests.swift */; };
+		5511D9A83414B259F2C4DDB5 /* AzureDevOpsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D510369AF6BD18FD711A0EE /* AzureDevOpsService.swift */; };
 		5C7DC55A0103AAB81CC4F301 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF4A0E553EBAEE0911E654EA /* Assets.xcassets */; };
 		5FDC245B3C2FE701F9F239D7 /* CommitGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1DE8B290DF547214601158B /* CommitGraphView.swift */; };
 		654475E7C44B2016AF3BF0D6 /* GitHubService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85BF739F4ECCF30A332C525 /* GitHubService.swift */; };
@@ -59,6 +60,7 @@
 		617D58E7EEDBECEBCD240CA4 /* MarkdownPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPreviewView.swift; sourceTree = "<group>"; };
 		6A6F59CBC66EC5723EA22DBF /* SourceSyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceSyntaxHighlighter.swift; sourceTree = "<group>"; };
 		739327E78B38D74660EB8F92 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		7D510369AF6BD18FD711A0EE /* AzureDevOpsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AzureDevOpsService.swift; sourceTree = "<group>"; };
 		9258D86924F5A83AAA47D1F9 /* GitExplorerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitExplorerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C8D5725D0CE284B279A9D13 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		A001A001A001A001A001A001 /* CommitGraphListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitGraphListView.swift; sourceTree = "<group>"; };
@@ -104,6 +106,7 @@
 			children = (
 				9C8D5725D0CE284B279A9D13 /* AppModel.swift */,
 				BF4A0E553EBAEE0911E654EA /* Assets.xcassets */,
+				7D510369AF6BD18FD711A0EE /* AzureDevOpsService.swift */,
 				A002A002A002A002A002A002 /* CommitComparisonView.swift */,
 				C0DEF001C0DEF001C0DEF001 /* CommitCreationView.swift */,
 				A003A003A003A003A003A003 /* CommitDetailsView.swift */,
@@ -233,6 +236,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D28C8BC1E414D5AF2DAF9F37 /* AppModel.swift in Sources */,
+				5511D9A83414B259F2C4DDB5 /* AzureDevOpsService.swift in Sources */,
 				B002B002B002B002B002B002 /* CommitComparisonView.swift in Sources */,
 				C0DEC001C0DEC001C0DEC001 /* CommitCreationView.swift in Sources */,
 				B003B003B003B003B003B003 /* CommitDetailsView.swift in Sources */,

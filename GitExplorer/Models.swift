@@ -1,5 +1,33 @@
 import Foundation
 
+enum SourceControlProvider: String, Codable, CaseIterable, Identifiable, Sendable {
+    case github
+    case azureDevOps
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .github: "GitHub"
+        case .azureDevOps: "Azure DevOps"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .github: "chevron.left.forwardslash.chevron.right"
+        case .azureDevOps: "cloud"
+        }
+    }
+}
+
+struct SourceControlAccount: Identifiable, Codable, Equatable, Sendable {
+    let id: UUID
+    let provider: SourceControlProvider
+    var displayName: String
+    var organization: String?
+}
+
 struct Repository: Identifiable, Hashable, Codable {
     let id: String
     var name: String
@@ -12,8 +40,15 @@ struct Repository: Identifiable, Hashable, Codable {
     var isPrivate: Bool
     var localURL: URL?
     var updatedAt: Date?
+    var sourceProvider: SourceControlProvider? = nil
+    var sourceAccountID: UUID? = nil
+    var remoteIdentifier: String? = nil
+    var remoteProject: String? = nil
 
     var isLocal: Bool { localURL != nil }
+    var provider: SourceControlProvider? {
+        sourceProvider ?? (webURL?.host?.lowercased() == "github.com" ? .github : nil)
+    }
 }
 
 struct GitCommit: Identifiable, Hashable {

@@ -15,6 +15,12 @@ enum GitServiceError: LocalizedError {
 }
 
 actor GitService {
+    struct RemoteRepositoryIdentity: Equatable, Sendable {
+        let provider: SourceControlProvider
+        let organization: String?
+        let fullName: String
+    }
+
     private let fieldSeparator = "\u{1f}"
     private let recordSeparator = "\u{1e}"
     private let executableURL: URL?
@@ -71,7 +77,8 @@ actor GitService {
             }
             enumerator.skipDescendants()
             let remote = try? run(["-C", url.path, "remote", "get-url", "origin"])
-            let fullName = remote.flatMap(Self.repositoryName(fromRemote:)) ?? url.lastPathComponent
+            let remoteIdentity = remote.flatMap(Self.remoteRepositoryIdentity(from:))
+            let fullName = remoteIdentity?.fullName ?? url.lastPathComponent
             let parts = fullName.split(separator: "/", maxSplits: 1).map(String.init)
             let branch = try? run(["-C", url.path, "branch", "--show-current"])
             let latestCommit = try? run(["-C", url.path, "log", "-1", "--format=%cI"])
@@ -81,13 +88,14 @@ actor GitService {
                 fullName: fullName,
                 owner: parts.count > 1 ? parts[0] : "Local",
                 description: nil,
-                webURL: Self.githubWebURL(fullName: fullName, remote: remote),
+                webURL: Self.webURL(for: remoteIdentity),
                 cloneURL: remote.flatMap(URL.init(string:)),
                 defaultBranch: branch?.isEmpty == false ? branch : nil,
                 isPrivate: false,
                 localURL: url,
                 updatedAt: latestCommit.flatMap(Self.gitDate) ??
-                    (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                    (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                sourceProvider: remoteIdentity?.provider
             ))
         }
         return repositories.sorted {
@@ -453,20 +461,29 @@ actor GitService {
         try updated.write(to: ignoreURL, atomically: true, encoding: .utf8)
     }
 
-    func clone(remote: URL, into directory: URL, token: String?) throws {
+    func clone(
+        remote: URL,
+        into directory: URL,
+        token: String?,
+        provider: SourceControlProvider? = .github
+    ) throws {
         var environment: [String: String] = [:]
         if let token, !token.isEmpty {
             environment = [
                 "GIT_CONFIG_COUNT": "1",
                 "GIT_CONFIG_KEY_0": "http.extraHeader",
-                "GIT_CONFIG_VALUE_0": Self.gitHTTPAuthorizationHeader(token: token)
+                "GIT_CONFIG_VALUE_0": Self.gitHTTPAuthorizationHeader(token: token, provider: provider)
             ]
         }
         _ = try run(["clone", remote.absoluteString, directory.path], environment: environment)
     }
 
-    static func gitHTTPAuthorizationHeader(token: String) -> String {
-        let credentials = Data("x-access-token:\(token)".utf8).base64EncodedString()
+    static func gitHTTPAuthorizationHeader(
+        token: String,
+        provider: SourceControlProvider? = .github
+    ) -> String {
+        let username = provider == .azureDevOps ? "" : "x-access-token"
+        let credentials = Data("\(username):\(token)".utf8).base64EncodedString()
         return "Authorization: Basic \(credentials)"
     }
 
@@ -640,21 +657,88 @@ actor GitService {
             .filter { seen.insert($0).inserted }
     }
 
-    private static func repositoryName(fromRemote remote: String) -> String? {
+    static func remoteRepositoryIdentity(from remote: String) -> RemoteRepositoryIdentity? {
         var value = remote.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.hasSuffix(".git") { value.removeLast(4) }
-        if let url = URL(string: value), let host = url.host, host.contains("github") {
-            return url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        if let url = URL(string: value), let host = url.host?.lowercased() {
+            let components = decodedPathComponents(url.path)
+            if host == "github.com", components.count >= 2 {
+                return RemoteRepositoryIdentity(
+                    provider: .github,
+                    organization: nil,
+                    fullName: components.suffix(2).joined(separator: "/")
+                )
+            }
+            if host == "dev.azure.com", components.count >= 4,
+               let gitIndex = components.firstIndex(where: { $0.caseInsensitiveCompare("_git") == .orderedSame }),
+               gitIndex > 0, gitIndex + 1 < components.count {
+                return RemoteRepositoryIdentity(
+                    provider: .azureDevOps,
+                    organization: components.first,
+                    fullName: "\(components[gitIndex - 1])/\(components[gitIndex + 1])"
+                )
+            }
+            if host.hasSuffix(".visualstudio.com"),
+               let gitIndex = components.firstIndex(where: { $0.caseInsensitiveCompare("_git") == .orderedSame }),
+               gitIndex > 0, gitIndex + 1 < components.count {
+                return RemoteRepositoryIdentity(
+                    provider: .azureDevOps,
+                    organization: String(host.dropLast(".visualstudio.com".count)),
+                    fullName: "\(components[gitIndex - 1])/\(components[gitIndex + 1])"
+                )
+            }
+            if host == "ssh.dev.azure.com", components.count >= 4 {
+                return RemoteRepositoryIdentity(
+                    provider: .azureDevOps,
+                    organization: components[components.count - 3],
+                    fullName: components.suffix(2).joined(separator: "/")
+                )
+            }
         }
-        if let colon = value.lastIndex(of: ":"), value.contains("@github") {
-            return String(value[value.index(after: colon)...])
+
+        if let colon = value.firstIndex(of: ":") {
+            let host = String(value[..<colon]).lowercased()
+            let path = String(value[value.index(after: colon)...])
+            let components = decodedPathComponents(path)
+            if host.contains("@github.com"), components.count >= 2 {
+                return RemoteRepositoryIdentity(
+                    provider: .github,
+                    organization: nil,
+                    fullName: components.suffix(2).joined(separator: "/")
+                )
+            }
+            if host.contains("@ssh.dev.azure.com"), components.count >= 4 {
+                return RemoteRepositoryIdentity(
+                    provider: .azureDevOps,
+                    organization: components[components.count - 3],
+                    fullName: components.suffix(2).joined(separator: "/")
+                )
+            }
         }
         return nil
     }
 
-    private static func githubWebURL(fullName: String, remote: String?) -> URL? {
-        guard remote.flatMap(repositoryName(fromRemote:)) != nil else { return nil }
-        return URL(string: "https://github.com/\(fullName)")
+    private static func decodedPathComponents(_ path: String) -> [String] {
+        path.split(separator: "/")
+            .map { String($0).removingPercentEncoding ?? String($0) }
+    }
+
+    private static func webURL(for identity: RemoteRepositoryIdentity?) -> URL? {
+        guard let identity else { return nil }
+        switch identity.provider {
+        case .github:
+            return URL(string: "https://github.com/\(identity.fullName)")
+        case .azureDevOps:
+            guard let organization = identity.organization else { return nil }
+            let components = identity.fullName.split(separator: "/", maxSplits: 1).map(String.init)
+            guard components.count == 2 else { return nil }
+            var url = URLComponents()
+            url.scheme = "https"
+            url.host = "dev.azure.com"
+            url.path = "/\(organization)/\(components[0])/_git/\(components[1])"
+            return url.url
+        }
     }
 
     private static func gitDate(_ value: String) -> Date? {

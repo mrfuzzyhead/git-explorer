@@ -40,6 +40,85 @@ final class GitServiceTests: XCTestCase {
         XCTAssertTrue(page.hasMore)
     }
 
+    func testAzurePipelineRunPageMapsBuildSummaryAndPagination() async throws {
+        let data = Data(#"""
+        {
+          "count": 2,
+          "value": [
+            {
+              "id": 314,
+              "buildNumber": "20260811.4",
+              "status": "completed",
+              "result": "succeeded",
+              "queueTime": "2026-08-11T01:00:00.000Z",
+              "startTime": "2026-08-11T01:01:00.000Z",
+              "finishTime": "2026-08-11T01:04:00.000Z",
+              "sourceBranch": "refs/heads/staging",
+              "sourceVersion": "0123456789abcdef",
+              "sourceVersionMessage": "Deploy staging\n\nPipeline run.",
+              "definition": { "name": "QRY API CI" },
+              "requestedFor": { "displayName": "Bradley Searle" },
+              "_links": {
+                "web": { "href": "https://dev.azure.com/Queensland-Rail/QRY/_build/results?buildId=314" }
+              }
+            },
+            {
+              "id": 313,
+              "buildNumber": "20260811.3",
+              "status": "inProgress",
+              "result": null,
+              "queueTime": "2026-08-11T00:00:00.000Z",
+              "startTime": null,
+              "finishTime": null,
+              "sourceBranch": "refs/heads/main",
+              "sourceVersion": "abcdef0123456789",
+              "definition": { "name": "QRY API CI" },
+              "requestedFor": { "displayName": "Bradley Searle" },
+              "_links": {}
+            }
+          ]
+        }
+        """#.utf8)
+        let repository = Repository(
+            id: "azure:queensland-rail:repo-id",
+            name: "QRY-API",
+            fullName: "QRY/QRY-API",
+            owner: "QRY",
+            isPrivate: true,
+            sourceProvider: .azureDevOps,
+            remoteIdentifier: "repo-id",
+            remoteProject: "QRY"
+        )
+
+        let page = try await AzureDevOpsService().pipelineRunPage(
+            from: data,
+            repository: repository,
+            organization: "Queensland-Rail",
+            offset: 0,
+            limit: 1
+        )
+        let run = try XCTUnwrap(page.runs.first)
+
+        XCTAssertEqual(run.id, 314)
+        XCTAssertEqual(run.workflowTitle, "QRY API CI")
+        XCTAssertEqual(run.commitTitle, "Deploy staging")
+        XCTAssertEqual(run.commitAuthor, "Bradley Searle")
+        XCTAssertEqual(run.branch, "staging")
+        XCTAssertEqual(run.displayStatus, .complete)
+        XCTAssertEqual(run.elapsedTime(), 180)
+        XCTAssertTrue(page.hasMore)
+
+        let secondPage = try await AzureDevOpsService().pipelineRunPage(
+            from: data,
+            repository: repository,
+            organization: "Queensland-Rail",
+            offset: 1,
+            limit: 1,
+            commitTitles: ["abcdef0123456789": "Use a readable Azure commit title"]
+        )
+        XCTAssertEqual(secondPage.runs.first?.commitTitle, "Use a readable Azure commit title")
+    }
+
     func testWorkflowRunDisplayStatusDistinguishesSuccessAndFailure() {
         let base = GitHubWorkflowRun(
             id: 1,
@@ -78,6 +157,10 @@ final class GitServiceTests: XCTestCase {
             GitService.gitHTTPAuthorizationHeader(token: "test-token"),
             "Authorization: Basic eC1hY2Nlc3MtdG9rZW46dGVzdC10b2tlbg=="
         )
+        XCTAssertEqual(
+            GitService.gitHTTPAuthorizationHeader(token: "azure-token", provider: .azureDevOps),
+            "Authorization: Basic OmF6dXJlLXRva2Vu"
+        )
     }
 
     func testDiscoversNestedRepositoryAndStopsAtGitRoot() async throws {
@@ -103,6 +186,46 @@ final class GitServiceTests: XCTestCase {
             repositories.first?.localURL?.resolvingSymlinksInPath(),
             repository.resolvingSymlinksInPath()
         )
+    }
+
+    func testParsesAzureDevOpsHTTPSRemoteIdentity() throws {
+        let identity = try XCTUnwrap(GitService.remoteRepositoryIdentity(
+            from: "https://example@dev.azure.com/example/My%20Project/_git/My%20Repo"
+        ))
+
+        XCTAssertEqual(identity.provider, .azureDevOps)
+        XCTAssertEqual(identity.organization, "example")
+        XCTAssertEqual(identity.fullName, "My Project/My Repo")
+    }
+
+    func testParsesQRYAzureDevOpsRemoteIdentity() throws {
+        let identity = try XCTUnwrap(GitService.remoteRepositoryIdentity(
+            from: "https://Queensland-Rail@dev.azure.com/Queensland-Rail/QRY/_git/QRY-API"
+        ))
+
+        XCTAssertEqual(identity.provider, .azureDevOps)
+        XCTAssertEqual(identity.organization, "Queensland-Rail")
+        XCTAssertEqual(identity.fullName, "QRY/QRY-API")
+    }
+
+    func testParsesAzureDevOpsSSHRemoteIdentity() throws {
+        let identity = try XCTUnwrap(GitService.remoteRepositoryIdentity(
+            from: "git@ssh.dev.azure.com:v3/example/MyProject/MyRepo"
+        ))
+
+        XCTAssertEqual(identity.provider, .azureDevOps)
+        XCTAssertEqual(identity.organization, "example")
+        XCTAssertEqual(identity.fullName, "MyProject/MyRepo")
+    }
+
+    func testParsesLegacyAzureDevOpsRemoteIdentity() throws {
+        let identity = try XCTUnwrap(GitService.remoteRepositoryIdentity(
+            from: "https://example.visualstudio.com/MyProject/_git/MyRepo"
+        ))
+
+        XCTAssertEqual(identity.provider, .azureDevOps)
+        XCTAssertEqual(identity.organization, "example")
+        XCTAssertEqual(identity.fullName, "MyProject/MyRepo")
     }
 
     func testDetectsInstalledGit() async {

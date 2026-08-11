@@ -589,15 +589,14 @@ private struct RemoteFileExplorerWorkspace: View {
 
     @MainActor
     private func load(path: String) async {
-        guard entriesByPath[path] == nil, !loadingPaths.contains(path), !model.githubToken.isEmpty else { return }
+        guard entriesByPath[path] == nil, !loadingPaths.contains(path), !model.token(for: repository).isEmpty else { return }
         loadingPaths.insert(path)
         errors[path] = nil
         do {
-            entriesByPath[path] = try await model.github.files(
-                fullName: repository.fullName,
+            entriesByPath[path] = try await model.remoteFiles(
+                for: repository,
                 path: path,
-                reference: repository.defaultBranch,
-                token: model.githubToken
+                reference: repository.defaultBranch
             )
         } catch {
             errors[path] = error.localizedDescription
@@ -767,11 +766,10 @@ private struct RemoteFilePreview: View {
         }
         .task {
             do {
-                contents = try await model.github.fileContents(
-                    fullName: repository.fullName,
+                contents = try await model.remoteFileContents(
+                    for: repository,
                     path: entry.path,
-                    reference: repository.defaultBranch,
-                    token: model.githubToken
+                    reference: repository.defaultBranch
                 )
             } catch {
                 errorMessage = error.localizedDescription

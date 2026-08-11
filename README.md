@@ -1,7 +1,7 @@
 # Git Explorer
 
 Git Explorer is a native macOS app for browsing local Git repositories and the
-repositories available to a GitHub account. It combines a searchable repository
+repositories available to GitHub and Azure DevOps accounts. It combines a searchable repository
 sidebar with local README, commit graph, and file views, plus remote repository
 previews and cloning.
 
@@ -17,7 +17,7 @@ The app is written in SwiftUI and targets the current development Mac:
 
 - Discovers Git repositories within a selected local folder, including nested
   organization folders up to three levels deep.
-- Loads owned, collaborator, and organization repositories from GitHub.
+- Loads repositories from multiple GitHub and Azure DevOps accounts.
 - Merges matching local and remote entries into one repository.
 - Groups repositories by owner or organization.
 - Filters by organization, local availability, remote-only status, and text
@@ -28,7 +28,7 @@ The app is written in SwiftUI and targets the current development Mac:
 
 - Renders the repository README when one exists.
 - Browses the default branch's commit graph, commit details, folders, and text
-  files directly through the GitHub API without requiring a clone.
+  files directly through the provider API without requiring a clone.
 - Shows privacy, default branch, compact update time, and HTTPS clone URL.
 - Prompts for a clone destination, defaulting to the configured local repositories folder.
 - Reports clone and Git action progress and results through reusable top-right toasts.
@@ -69,13 +69,24 @@ The app is written in SwiftUI and targets the current development Mac:
 - Xcode 26 or newer
 - Git
 - XcodeGen 2.46 or newer when regenerating the Xcode project
-- A GitHub personal access token for GitHub repositories
+- A personal access token for each GitHub or Azure DevOps account
 
 Git Explorer checks common Homebrew and system locations for Git. If Git is not
 available, the app displays a warning with installation links and keeps remote
 GitHub browsing available.
 
-## GitHub personal access token
+## Source control accounts
+
+Open **Git Explorer → Settings → Accounts** to connect one or more accounts.
+Account metadata is stored in app preferences and every personal access token is
+stored separately in macOS Keychain.
+
+For Azure DevOps, enter the organization name from
+`https://dev.azure.com/<organization>` and a PAT with **Code: Read** access.
+Git Explorer validates the account and loads repositories across projects in
+that organization. Azure Pipelines runs are not displayed yet.
+
+### GitHub personal access token
 
 The preferred setup is a fine-grained personal access token with:
 
@@ -88,7 +99,7 @@ for organization membership.
 
 There are two supported development workflows:
 
-1. Enter the token in **Git Explorer → Settings** and choose **Save**. The app
+1. Enter the token in **Git Explorer → Settings → Accounts** and choose **Connect**. The app
    stores it in macOS Keychain.
 2. Copy `.env.example` to `.env` and set:
 
@@ -100,8 +111,8 @@ The `.env` fallback is compiled only in Debug builds. Release builds use the
 Keychain or a `GITHUB_PAT` process environment value. The real `.env` file is
 ignored by Git and must never be committed.
 
-GitHub requests use the official REST API and automatically paginate repository
-and organization results.
+GitHub and Azure DevOps requests use their official REST APIs. GitHub repository
+and organization results are automatically paginated.
 
 ## Getting started
 
@@ -124,8 +135,8 @@ On first launch:
 1. Open **Git Explorer → Settings**.
 2. Confirm that Git is detected.
 3. Choose the local folder that contains your repositories.
-4. Enter and save a GitHub personal access token, or use the Debug `.env`
-   fallback.
+4. Connect one or more GitHub or Azure DevOps accounts. Debug builds can still
+   migrate a `GITHUB_PAT` from `.env` into the account model.
 
 The selected folder is retained as a security-scoped bookmark so sandboxed app
 launches can reopen it.
@@ -169,7 +180,11 @@ GitExplorerApp
     ├── GitHubService
     │   ├── paginated repository and organization requests
     │   ├── remote README, commit, contents, and file requests
-    │   └── Keychain-backed PAT storage
+    ├── AzureDevOpsService
+    │   ├── account validation and repository discovery
+    │   └── remote README, commit, contents, and file requests
+    ├── SourceControlAccountStore
+    │   └── multi-account metadata and Keychain-backed PAT storage
     └── GitService
         ├── Git executable detection
         ├── local repository discovery

@@ -145,11 +145,7 @@ struct CommitDetailsPanel: View {
                         try await model.git.details(for: commit, at: url)
                     }
                 } else {
-                    loadedDetails = try await model.github.commitDetails(
-                        fullName: repository.fullName,
-                        commit: commit,
-                        token: model.githubToken
-                    )
+                    loadedDetails = try await model.remoteCommitDetails(for: repository, commit: commit)
                 }
                 details = loadedDetails
                 selectedFile = loadedDetails.changedFiles.first

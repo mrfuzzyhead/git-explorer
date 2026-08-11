@@ -2,7 +2,7 @@ import SwiftUI
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case git = "Git"
-    case github = "GitHub"
+    case accounts = "Accounts"
     case artificialIntelligence = "Artificial Intelligence"
     case locations = "Locations"
 
@@ -11,7 +11,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .git: "point.3.connected.trianglepath.dotted"
-        case .github: "person.crop.circle"
+        case .accounts: "person.crop.circle"
         case .artificialIntelligence: "sparkles"
         case .locations: "externaldrive"
         }
@@ -21,8 +21,11 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedPane: SettingsPane = .git
-    @State private var tokenDraft = ""
-    @State private var isEditingToken = false
+    @State private var accountProvider = SourceControlProvider.github
+    @State private var accountOrganization = ""
+    @State private var accountToken = ""
+    @State private var isAddingAccount = false
+    @State private var accountError: String?
     @State private var apiKeyDraft = ""
     @State private var isEditingAPIKey = false
 
@@ -84,7 +87,7 @@ struct SettingsView: View {
     private var paneContent: some View {
         switch selectedPane {
         case .git: gitPane
-        case .github: githubPane
+        case .accounts: accountsPane
         case .artificialIntelligence: artificialIntelligencePane
         case .locations: locationsPane
         }
@@ -136,75 +139,74 @@ struct SettingsView: View {
         }
     }
 
-    private var githubPane: some View {
+    private var accountsPane: some View {
         SettingsPage {
-            SettingsGroup("Authentication") {
-                if isEditingToken || trimmedToken.isEmpty {
-                    HStack(spacing: 8) {
-                        SecureField("Personal access token", text: $tokenDraft)
-                            .textContentType(.password)
-
-                        Button("Save") {
-                            saveToken()
-                        }
-                        .disabled(trimmedTokenDraft.isEmpty)
-                    }
-                    .settingsRow()
+            SettingsGroup("Connected accounts") {
+                if model.accounts.isEmpty {
+                    Text("No accounts connected.")
+                        .foregroundStyle(.secondary)
+                        .settingsRow()
                 } else {
-                    HStack(spacing: 12) {
-                        Label("Stored in Keychain (\(maskedToken))", systemImage: "key.fill")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Change API Key") {
-                            tokenDraft = ""
-                            isEditingToken = true
-                        }
+                    ForEach(Array(model.accounts.enumerated()), id: \.element.id) { index, account in
+                        if index > 0 { Divider().padding(.horizontal, 12) }
+                        accountRow(account)
                     }
-                    .settingsRow()
                 }
-
-                Divider().padding(.horizontal, 12)
-
-                Text("The token is stored securely in your macOS Keychain. Use a fine-grained token with read access to repository metadata and contents, or a classic token with repo and read:org scopes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .settingsRow()
             }
 
-            SettingsGroup("Connection") {
-                SettingsLabeledRow("Status") {
-                    githubStatusLabel
+            SettingsGroup("Add account") {
+                SettingsLabeledRow("Provider") {
+                    Picker("Provider", selection: $accountProvider) {
+                        ForEach(SourceControlProvider.allCases) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 300)
                 }
                 .settingsRow()
+
+                if accountProvider == .azureDevOps {
+                    Divider().padding(.horizontal, 12)
+                    SettingsLabeledRow("Organization") {
+                        TextField("Organization name", text: $accountOrganization)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 300)
+                    }
+                    .settingsRow()
+                }
 
                 Divider().padding(.horizontal, 12)
-
-                SettingsLabeledRow("Account") {
-                    Text(model.githubAccountName.map { "@\($0)" } ?? "—")
-                        .foregroundStyle(isCheckingConnection ? .tertiary : .primary)
+                SettingsLabeledRow("Personal access token") {
+                    SecureField(accountProvider == .github ? "GitHub token" : "Azure DevOps token", text: $accountToken)
+                        .textContentType(.password)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 300)
                 }
                 .settingsRow()
 
-                if case let .failed(message) = model.githubConnectionStatus {
+                if let accountError {
                     Divider().padding(.horizontal, 12)
-
-                    Text(message)
+                    Text(accountError)
                         .font(.callout)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
                         .settingsRow()
                 }
 
                 Divider().padding(.horizontal, 12)
-
                 HStack {
+                    Text("Tokens are stored securely in your macOS Keychain.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Test Connection") {
-                        Task { await model.testGitHubConnection() }
+                    if isAddingAccount { ProgressView().controlSize(.small) }
+                    Button("Connect") {
+                        addAccount()
                     }
-                    .disabled(trimmedToken.isEmpty || isCheckingConnection)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canAddAccount || isAddingAccount)
                 }
                 .settingsRow()
             }
@@ -212,13 +214,10 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var githubStatusLabel: some View {
-        switch model.githubConnectionStatus {
+    private func accountStatusLabel(_ account: SourceControlAccount) -> some View {
+        switch model.accountConnectionStatuses[account.id] ?? .notConfigured {
         case .notConfigured:
-            Label(
-                trimmedToken.isEmpty ? "Not configured" : "Ready to connect",
-                systemImage: "circle.dashed"
-            )
+            Label("Not configured", systemImage: "circle.dashed")
             .foregroundStyle(.secondary)
         case .checking:
             HStack(spacing: 7) {
@@ -232,6 +231,41 @@ struct SettingsView: View {
             Label("Connection failed", systemImage: "xmark.circle.fill")
                 .foregroundStyle(.red)
         }
+    }
+
+    private func accountRow(_ account: SourceControlAccount) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 12) {
+                Image(systemName: account.provider.icon)
+                    .frame(width: 28, height: 28)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(account.displayName).fontWeight(.medium)
+                    HStack(spacing: 6) {
+                        Text(account.provider.displayName)
+                        if let organization = account.organization { Text("• \(organization)") }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                accountStatusLabel(account)
+                Button("Test") { Task { await model.testConnection(for: account.id) } }
+                Button(role: .destructive) {
+                    Task { await model.removeAccount(account) }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .help("Remove account")
+            }
+            if case let .failed(message) = model.accountConnectionStatuses[account.id] {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+        .settingsRow()
     }
 
     private var locationsPane: some View {
@@ -291,14 +325,6 @@ struct SettingsView: View {
         }
     }
 
-    private var trimmedToken: String {
-        model.githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var trimmedTokenDraft: String {
-        tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private var trimmedAPIKey: String {
         model.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -311,20 +337,29 @@ struct SettingsView: View {
         "…" + String(trimmedAPIKey.suffix(8))
     }
 
-    private var maskedToken: String {
-        "…" + String(trimmedToken.suffix(8))
+    private var canAddAccount: Bool {
+        !accountToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            (accountProvider == .github || !accountOrganization.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
-    private var isCheckingConnection: Bool {
-        model.githubConnectionStatus == .checking
-    }
-
-    private func saveToken() {
-        model.githubToken = trimmedTokenDraft
-        model.githubCredentialsChanged()
-        tokenDraft = ""
-        isEditingToken = false
-        Task { await model.saveToken() }
+    private func addAccount() {
+        guard canAddAccount else { return }
+        isAddingAccount = true
+        accountError = nil
+        Task {
+            do {
+                try await model.addAccount(
+                    provider: accountProvider,
+                    organization: accountProvider == .azureDevOps ? accountOrganization : nil,
+                    token: accountToken
+                )
+                accountToken = ""
+                accountOrganization = ""
+            } catch {
+                accountError = error.localizedDescription
+            }
+            isAddingAccount = false
+        }
     }
 
     private func saveAPIKey() {

@@ -324,13 +324,11 @@ struct CommitGraphView: View {
         if let url = repository.localURL {
             page = try await model.git.commitPage(at: url, offset: offset, limit: pageSize)
         } else {
-            guard !model.githubToken.isEmpty else { return }
-            page = try await model.github.commitPage(
-                fullName: repository.fullName,
-                branch: repository.defaultBranch,
+            guard !model.token(for: repository).isEmpty else { return }
+            page = try await model.remoteCommitPage(
+                for: repository,
                 offset: offset,
-                limit: pageSize,
-                token: model.githubToken
+                limit: pageSize
             )
         }
         let combined = offset == 0 ? page.commits : commits + page.commits

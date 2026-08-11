@@ -1,11 +1,16 @@
 import AppKit
 import Foundation
 
-enum GitHubConnectionStatus: Equatable {
+enum AccountConnectionStatus: Equatable {
     case notConfigured
     case checking
     case connected(username: String)
     case failed(message: String)
+
+    var isConnected: Bool {
+        if case .connected = self { return true }
+        return false
+    }
 }
 
 @MainActor
@@ -20,18 +25,18 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var searchText = ""
-    @Published var githubToken = TokenStore.initialToken()
+    @Published private(set) var accounts: [SourceControlAccount] = []
+    @Published private(set) var accountConnectionStatuses: [UUID: AccountConnectionStatus] = [:]
     @Published var openAIAPIKey = OpenAIKeyStore.read()
     @Published var reposDirectory: URL?
     @Published var isLoading = false
     @Published var gitAvailability: GitAvailability = .checking
-    @Published var githubConnectionStatus: GitHubConnectionStatus = .notConfigured
-    @Published private(set) var githubAccountName: String?
     @Published private(set) var toasts: [AppToast] = []
     @Published private(set) var cloningRepositoryIDs: Set<Repository.ID> = []
 
     let git = GitService()
     let github = GitHubService()
+    let azureDevOps = AzureDevOpsService()
     private let defaults: UserDefaults
     private var remoteRepositories: [Repository] = []
     private var localRepositories: [Repository] = []
@@ -40,6 +45,7 @@ final class AppModel: ObservableObject {
 
     private static let repositoryCacheDefaultsKey = "repositoryCache.v1"
     private static let selectedRepositoryDefaultsKey = "selectedRepositoryID"
+    private static let accountMigrationDefaultsKey = "sourceControlAccounts.didMigrateLegacyGitHub.v1"
     private static let initialRefreshDelay = Duration.milliseconds(750)
 
     private struct RepositoryCache: Codable {
@@ -50,6 +56,8 @@ final class AppModel: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        accounts = SourceControlAccountStore.load(defaults: defaults)
+        migrateLegacyGitHubAccountIfNeeded()
         restoreRepositoryCache()
     }
 
@@ -85,7 +93,9 @@ final class AppModel: ObservableObject {
             reposDirectory = url
             _ = url.startAccessingSecurityScopedResource()
         }
-        await testGitHubConnection()
+        for account in accounts {
+            await testConnection(for: account.id)
+        }
         scheduleInitialRefresh()
     }
 
@@ -116,7 +126,7 @@ final class AppModel: ObservableObject {
         defer { isLoading = false }
         let toastID = showToast(
             title: repositories.isEmpty ? "Loading repositories…" : "Refreshing repositories…",
-            message: "Checking local and GitHub repositories.",
+            message: "Checking local and connected account repositories.",
             style: .information,
             showsActivity: true,
             isDismissible: false
@@ -125,15 +135,33 @@ final class AppModel: ObservableObject {
             if let reposDirectory, gitAvailability.isAvailable {
                 localRepositories = try await git.discoverRepositories(in: reposDirectory)
             }
-            if !githubToken.isEmpty, case .connected = githubConnectionStatus {
-                async let repos = github.repositories(token: githubToken)
-                async let orgs = github.organizations(token: githubToken)
-                remoteRepositories = try await repos
-                organizations = Array(Set(try await orgs + remoteRepositories.map(\.owner))).sorted()
-            } else if githubToken.isEmpty {
-                remoteRepositories = []
-                organizations = []
+            var loadedRemoteRepositories: [Repository] = []
+            var loadedOrganizations: [String] = []
+            for account in accounts where accountConnectionStatuses[account.id]?.isConnected == true {
+                let token = SourceControlAccountStore.token(for: account.id)
+                switch account.provider {
+                case .github:
+                    async let repos = github.repositories(token: token)
+                    async let orgs = github.organizations(token: token)
+                    let accountRepositories = try await repos.map {
+                        var repository = $0
+                        repository.sourceProvider = .github
+                        repository.sourceAccountID = account.id
+                        return repository
+                    }
+                    loadedRemoteRepositories.append(contentsOf: accountRepositories)
+                    loadedOrganizations.append(contentsOf: try await orgs)
+                case .azureDevOps:
+                    guard let organization = account.organization else { continue }
+                    loadedRemoteRepositories.append(contentsOf: try await azureDevOps.repositories(
+                        organization: organization,
+                        accountID: account.id,
+                        token: token
+                    ))
+                }
             }
+            remoteRepositories = loadedRemoteRepositories
+            organizations = Array(Set(loadedOrganizations + remoteRepositories.map(\.owner))).sorted()
             mergeRepositories()
             saveRepositoryCache()
             updateToast(
@@ -158,23 +186,40 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func saveToken() async {
-        TokenStore.save(githubToken.trimmingCharacters(in: .whitespacesAndNewlines))
-        githubToken = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        await testGitHubConnection()
-        if case .connected = githubConnectionStatus {
-            await refresh()
-        } else {
-            remoteRepositories = []
-            organizations = []
-            mergeRepositories()
-            saveRepositoryCache()
+    func addAccount(provider: SourceControlProvider, organization: String?, token: String) async throws {
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let organization = organization?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = UUID()
+        let displayName: String
+        switch provider {
+        case .github:
+            displayName = try await github.account(token: token).login
+        case .azureDevOps:
+            guard let organization, !organization.isEmpty else { throw AzureDevOpsError.invalidOrganization }
+            displayName = try await azureDevOps.account(organization: organization, token: token).displayName
         }
+        let account = SourceControlAccount(
+            id: id,
+            provider: provider,
+            displayName: displayName,
+            organization: provider == .azureDevOps ? organization : nil
+        )
+        accounts.append(account)
+        SourceControlAccountStore.saveToken(token, for: id)
+        SourceControlAccountStore.save(accounts, defaults: defaults)
+        accountConnectionStatuses[id] = .connected(username: displayName)
+        await refresh()
     }
 
-    func githubCredentialsChanged() {
-        githubAccountName = nil
-        githubConnectionStatus = .notConfigured
+    func removeAccount(_ account: SourceControlAccount) async {
+        accounts.removeAll { $0.id == account.id }
+        accountConnectionStatuses[account.id] = nil
+        SourceControlAccountStore.remove(account.id)
+        SourceControlAccountStore.save(accounts, defaults: defaults)
+        remoteRepositories.removeAll { $0.sourceAccountID == account.id }
+        organizations = Array(Set(remoteRepositories.map(\.owner))).sorted()
+        mergeRepositories()
+        saveRepositoryCache()
     }
 
     func saveOpenAIAPIKey() {
@@ -183,24 +228,131 @@ final class AppModel: ObservableObject {
         OpenAIKeyStore.save(trimmed)
     }
 
-    func testGitHubConnection() async {
-        let token = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    func testConnection(for accountID: UUID) async {
+        guard let account = accounts.first(where: { $0.id == accountID }) else { return }
+        let token = SourceControlAccountStore.token(for: accountID).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {
-            githubConnectionStatus = .notConfigured
+            accountConnectionStatuses[accountID] = .notConfigured
             return
         }
 
-        githubConnectionStatus = .checking
+        accountConnectionStatuses[accountID] = .checking
         do {
-            let account = try await github.account(token: token)
-            guard token == githubToken.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-            githubAccountName = account.login
-            githubConnectionStatus = .connected(username: account.login)
+            let name: String
+            switch account.provider {
+            case .github:
+                name = try await github.account(token: token).login
+            case .azureDevOps:
+                guard let organization = account.organization else { throw AzureDevOpsError.invalidOrganization }
+                name = try await azureDevOps.account(organization: organization, token: token).displayName
+            }
+            guard SourceControlAccountStore.token(for: accountID) == token else { return }
+            if let index = accounts.firstIndex(where: { $0.id == accountID }) {
+                accounts[index].displayName = name
+                SourceControlAccountStore.save(accounts, defaults: defaults)
+            }
+            accountConnectionStatuses[accountID] = .connected(username: name)
         } catch is CancellationError {
             return
         } catch {
-            guard token == githubToken.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-            githubConnectionStatus = .failed(message: error.localizedDescription)
+            guard SourceControlAccountStore.token(for: accountID) == token else { return }
+            accountConnectionStatuses[accountID] = .failed(message: error.localizedDescription)
+        }
+    }
+
+    func token(for repository: Repository) -> String {
+        guard let accountID = repository.sourceAccountID else {
+            return accounts.first(where: { $0.provider == .github }).map {
+                SourceControlAccountStore.token(for: $0.id)
+            } ?? ""
+        }
+        return SourceControlAccountStore.token(for: accountID)
+    }
+
+    func account(for repository: Repository) -> SourceControlAccount? {
+        repository.sourceAccountID.flatMap { id in accounts.first { $0.id == id } }
+    }
+
+    func remoteReadme(for repository: Repository) async throws -> String? {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else { throw AzureDevOpsError.invalidOrganization }
+            return try await azureDevOps.readme(repository: repository, organization: organization, token: token)
+        case .github, .none:
+            return try await github.readme(fullName: repository.fullName, token: token)
+        }
+    }
+
+    func remoteCommitPage(for repository: Repository, offset: Int, limit: Int) async throws -> GitCommitPage {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else { throw AzureDevOpsError.invalidOrganization }
+            return try await azureDevOps.commitPage(repository: repository, offset: offset, limit: limit, organization: organization, token: token)
+        case .github, .none:
+            return try await github.commitPage(fullName: repository.fullName, branch: repository.defaultBranch, offset: offset, limit: limit, token: token)
+        }
+    }
+
+    func remoteWorkflowRunPage(
+        for repository: Repository,
+        offset: Int,
+        limit: Int
+    ) async throws -> GitHubWorkflowRunPage {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else {
+                throw AzureDevOpsError.invalidOrganization
+            }
+            return try await azureDevOps.pipelineRunPage(
+                repository: repository,
+                offset: offset,
+                limit: limit,
+                organization: organization,
+                token: token
+            )
+        case .github, .none:
+            return try await github.workflowRunPage(
+                fullName: repository.fullName,
+                offset: offset,
+                limit: limit,
+                token: token
+            )
+        }
+    }
+
+    func remoteCommitDetails(for repository: Repository, commit: GitCommit) async throws -> CommitDetails {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else { throw AzureDevOpsError.invalidOrganization }
+            return try await azureDevOps.commitDetails(repository: repository, commit: commit, organization: organization, token: token)
+        case .github, .none:
+            return try await github.commitDetails(fullName: repository.fullName, commit: commit, token: token)
+        }
+    }
+
+    func remoteFiles(for repository: Repository, path: String, reference: String?) async throws -> [RemoteFileEntry] {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else { throw AzureDevOpsError.invalidOrganization }
+            return try await azureDevOps.files(repository: repository, path: path, reference: reference, organization: organization, token: token)
+        case .github, .none:
+            return try await github.files(fullName: repository.fullName, path: path, reference: reference, token: token)
+        }
+    }
+
+    func remoteFileContents(for repository: Repository, path: String, reference: String?) async throws -> String {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else { throw AzureDevOpsError.invalidOrganization }
+            return try await azureDevOps.fileContents(repository: repository, path: path, reference: reference, organization: organization, token: token)
+        case .github, .none:
+            return try await github.fileContents(fullName: repository.fullName, path: path, reference: reference, token: token)
         }
     }
 
@@ -248,7 +400,8 @@ final class AppModel: ObservableObject {
             try await git.clone(
                 remote: cloneURL,
                 into: destination,
-                token: githubToken
+                token: token(for: repository),
+                provider: repository.provider
             )
             await refresh()
             selectedRepositoryID = repository.id
@@ -351,14 +504,18 @@ final class AppModel: ObservableObject {
 
     private func mergeRepositories() {
         var merged: [String: Repository] = [:]
-        for remote in remoteRepositories { merged[remote.fullName.lowercased()] = remote }
+        for remote in remoteRepositories {
+            let key = "\(remote.provider?.rawValue ?? "remote"):\(remote.id)"
+            merged[key] = remote
+        }
         for local in localRepositories {
-            let key = local.fullName.lowercased()
-            if var existing = merged[key] {
+            if let remoteKey = merged.first(where: {
+                repositoriesMatch(local: local, remote: $0.value)
+            })?.key, var existing = merged[remoteKey] {
                 existing.localURL = local.localURL
-                merged[key] = existing
+                merged[remoteKey] = existing
             } else {
-                merged[key] = local
+                merged["local:\(local.id)"] = local
             }
         }
         repositories = merged.values.sorted {
@@ -367,6 +524,41 @@ final class AppModel: ObservableObject {
         if selectedRepositoryID == nil || !repositories.contains(where: { $0.id == selectedRepositoryID }) {
             selectedRepositoryID = repositories.first?.id
         }
+    }
+
+    private func repositoriesMatch(local: Repository, remote: Repository) -> Bool {
+        let localIdentity = local.cloneURL.flatMap {
+            GitService.remoteRepositoryIdentity(from: $0.absoluteString)
+        }
+        let remoteIdentity = remote.cloneURL.flatMap {
+            GitService.remoteRepositoryIdentity(from: $0.absoluteString)
+        }
+        if let localIdentity, let remoteIdentity {
+            guard localIdentity.provider == remoteIdentity.provider,
+                  localIdentity.fullName.caseInsensitiveCompare(remoteIdentity.fullName) == .orderedSame else {
+                return false
+            }
+            if let localOrganization = localIdentity.organization,
+               let remoteOrganization = remoteIdentity.organization {
+                return localOrganization.caseInsensitiveCompare(remoteOrganization) == .orderedSame
+            }
+            return true
+        }
+
+        guard local.fullName.caseInsensitiveCompare(remote.fullName) == .orderedSame else {
+            return false
+        }
+        if let localProvider = local.provider, let remoteProvider = remote.provider,
+           localProvider != remoteProvider {
+            return false
+        }
+        guard local.provider == .azureDevOps || remote.provider == .azureDevOps else {
+            return true
+        }
+        let localOrganization = localIdentity?.organization
+        let remoteOrganization = remoteIdentity?.organization
+        guard let localOrganization, let remoteOrganization else { return true }
+        return localOrganization.caseInsensitiveCompare(remoteOrganization) == .orderedSame
     }
 
     private func restoreRepositoryCache() {
@@ -395,5 +587,22 @@ final class AppModel: ObservableObject {
         )
         guard let data = try? JSONEncoder().encode(cache) else { return }
         defaults.set(data, forKey: Self.repositoryCacheDefaultsKey)
+    }
+
+    private func migrateLegacyGitHubAccountIfNeeded() {
+        guard accounts.isEmpty, !defaults.bool(forKey: Self.accountMigrationDefaultsKey) else { return }
+        let token = TokenStore.initialToken().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
+        let account = SourceControlAccount(
+            id: UUID(),
+            provider: .github,
+            displayName: "GitHub account",
+            organization: nil
+        )
+        accounts = [account]
+        SourceControlAccountStore.saveToken(token, for: account.id)
+        SourceControlAccountStore.save(accounts, defaults: defaults)
+        TokenStore.save("")
+        defaults.set(true, forKey: Self.accountMigrationDefaultsKey)
     }
 }
