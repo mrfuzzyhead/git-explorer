@@ -17,7 +17,11 @@ enum AccountConnectionStatus: Equatable {
 final class AppModel: ObservableObject {
     @Published var repositories: [Repository] = []
     @Published var organizations: [String] = []
-    @Published var selectedOrganization = "All"
+    @Published var selectedOrganization = "All" {
+        didSet {
+            defaults.set(selectedOrganization, forKey: Self.selectedOrganizationDefaultsKey)
+        }
+    }
     @Published var repositoryFilter: RepositoryFilter = .all
     @Published var selectedRepositoryID: Repository.ID? {
         didSet {
@@ -45,6 +49,7 @@ final class AppModel: ObservableObject {
 
     private static let repositoryCacheDefaultsKey = "repositoryCache.v1"
     private static let selectedRepositoryDefaultsKey = "selectedRepositoryID"
+    private static let selectedOrganizationDefaultsKey = "selectedOrganization"
     private static let accountMigrationDefaultsKey = "sourceControlAccounts.didMigrateLegacyGitHub.v1"
     private static let initialRefreshDelay = Duration.milliseconds(750)
 
@@ -59,6 +64,7 @@ final class AppModel: ObservableObject {
         accounts = SourceControlAccountStore.load(defaults: defaults)
         migrateLegacyGitHubAccountIfNeeded()
         restoreRepositoryCache()
+        restoreSelectedOrganization()
     }
 
     var selectedRepository: Repository? {
@@ -162,6 +168,7 @@ final class AppModel: ObservableObject {
             }
             remoteRepositories = loadedRemoteRepositories
             organizations = Array(Set(loadedOrganizations + remoteRepositories.map(\.owner))).sorted()
+            normalizeSelectedOrganization()
             mergeRepositories()
             saveRepositoryCache()
             updateToast(
@@ -218,6 +225,7 @@ final class AppModel: ObservableObject {
         SourceControlAccountStore.save(accounts, defaults: defaults)
         remoteRepositories.removeAll { $0.sourceAccountID == account.id }
         organizations = Array(Set(remoteRepositories.map(\.owner))).sorted()
+        normalizeSelectedOrganization()
         mergeRepositories()
         saveRepositoryCache()
     }
@@ -600,6 +608,23 @@ final class AppModel: ObservableObject {
         if let selectedID = cachedSelection,
            repositories.contains(where: { $0.id == selectedID }) {
             selectedRepositoryID = selectedID
+        }
+    }
+
+    private func restoreSelectedOrganization() {
+        let cachedOrganization = defaults.string(forKey: Self.selectedOrganizationDefaultsKey) ?? "All"
+        if cachedOrganization == "All" || organizations.contains(cachedOrganization) || organizations.isEmpty {
+            selectedOrganization = cachedOrganization
+        } else {
+            selectedOrganization = "All"
+        }
+    }
+
+    private func normalizeSelectedOrganization() {
+        guard selectedOrganization != "All" else { return }
+        guard !organizations.isEmpty else { return }
+        if !organizations.contains(selectedOrganization) {
+            selectedOrganization = "All"
         }
     }
 

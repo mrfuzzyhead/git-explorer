@@ -14,12 +14,18 @@ struct RepositorySidebar: View {
             ZStack {
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        ForEach(groupedOwners, id: \.owner) { group in
-                            OwnerGroup(
-                                owner: group.owner,
-                                repositories: group.repositories,
-                                isExpanded: ownerExpansionBinding(for: group.owner)
-                            )
+                        if showsOrganizationGroups {
+                            ForEach(groupedOwners, id: \.owner) { group in
+                                OwnerGroup(
+                                    owner: group.owner,
+                                    repositories: group.repositories,
+                                    isExpanded: ownerExpansionBinding(for: group.owner)
+                                )
+                            }
+                        } else {
+                            ForEach(flatRepositories) { repository in
+                                repositoryButton(for: repository, indented: false)
+                            }
                         }
                     }
                     .padding(.horizontal, 8)
@@ -118,29 +124,86 @@ struct RepositorySidebar: View {
         .accessibilityLabel("Repository controls")
     }
 
+    @ViewBuilder
     private var repositoryTools: some View {
-        Group {
-            if isSearchPresented {
-                TextField("Search repositories", text: $model.searchText)
-                    .textFieldStyle(.plain)
-                    .focused($isSearchFocused)
-                    .padding(.horizontal, 12)
-                    .frame(height: 32)
-                    .frame(minWidth: 0, maxWidth: .infinity)
-                    .background(.quaternary, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(
-                                isSearchFocused ? Color.accentColor : Color.secondary.opacity(0.18),
-                                lineWidth: isSearchFocused ? 2 : 1
-                            )
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 10)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
+        if isSearchPresented {
+            TextField("Search repositories", text: $model.searchText)
+                .textFieldStyle(.plain)
+                .focused($isSearchFocused)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .background(.quaternary, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(
+                            isSearchFocused ? Color.accentColor : Color.secondary.opacity(0.18),
+                            lineWidth: isSearchFocused ? 2 : 1
+                        )
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+        } else {
+            organizationMenu
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+                .onChange(of: model.selectedOrganization) {
+                    repositoryScrollReset += 1
+                }
         }
-        .animation(.snappy(duration: 0.2), value: isSearchPresented)
+    }
+
+    private var organizationMenu: some View {
+        // borderlessButton sizes to the title and draws its own centered chrome
+        // (chevron + label). Use a plain custom label so the whole pill is the
+        // hit target, with title leading and disclosure trailing.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: 32)
+            .overlay {
+                GeometryReader { geometry in
+                    Menu {
+                        Button {
+                            model.selectedOrganization = "All"
+                        } label: {
+                            if model.selectedOrganization == "All" {
+                                Label("All organizations", systemImage: "checkmark")
+                            } else {
+                                Text("All organizations")
+                            }
+                        }
+
+                        Divider()
+
+                        ForEach(model.organizations.filter { $0 != "All" }, id: \.self) { organization in
+                            Button {
+                                model.selectedOrganization = organization
+                            } label: {
+                                if model.selectedOrganization == organization {
+                                    Label(organization, systemImage: "checkmark")
+                                } else {
+                                    Text(organization)
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(model.selectedOrganization == "All" ? "All organizations" : model.selectedOrganization)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+                        .background(Color.secondary.opacity(0.16), in: Capsule())
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                }
+            }
     }
 
     private var refreshButton: some View {
@@ -179,18 +242,38 @@ struct RepositorySidebar: View {
         )
     }
 
-    private var groupedOwners: [(owner: String, repositories: [Repository])] {
-        let repositories = isAwaitingSearchQuery
-            ? []
-            : model.visibleRepositories
+    private var showsOrganizationGroups: Bool {
+        model.selectedOrganization == "All"
+    }
 
-        return Dictionary(grouping: repositories, by: \.owner)
+    private var groupedOwners: [(owner: String, repositories: [Repository])] {
+        Dictionary(grouping: flatRepositories, by: \.owner)
             .map { ($0.key, $0.value) }
             .sorted { $0.owner.localizedStandardCompare($1.owner) == .orderedAscending }
     }
 
+    private var flatRepositories: [Repository] {
+        isAwaitingSearchQuery ? [] : model.visibleRepositories
+    }
+
     private var isAwaitingSearchQuery: Bool {
         isSearchPresented && model.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func repositoryButton(for repository: Repository, indented: Bool) -> some View {
+        Button {
+            model.selectedRepositoryID = repository.id
+        } label: {
+            RepositoryRow(repository: repository, indented: indented)
+        }
+        .buttonStyle(ResponsiveButtonStyle(
+            isSelected: model.selectedRepositoryID == repository.id,
+            shape: .rounded(6),
+            selectedBackground: Color.accentColor.opacity(0.18)
+        ))
+        .accessibilityAddTraits(
+            model.selectedRepositoryID == repository.id ? .isSelected : []
+        )
     }
 }
 
@@ -232,9 +315,7 @@ private struct OwnerGroup: View {
                     Button {
                         model.selectedRepositoryID = repository.id
                     } label: {
-                        RepositoryRow(
-                            repository: repository
-                        )
+                        RepositoryRow(repository: repository, indented: true)
                     }
                     .buttonStyle(ResponsiveButtonStyle(
                         isSelected: model.selectedRepositoryID == repository.id,
@@ -252,6 +333,7 @@ private struct OwnerGroup: View {
 
 private struct RepositoryRow: View {
     let repository: Repository
+    var indented: Bool = true
 
     var body: some View {
         HStack(spacing: 10) {
@@ -270,7 +352,7 @@ private struct RepositoryRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 26)
+        .padding(.leading, indented ? 26 : 8)
         .padding(.trailing, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)

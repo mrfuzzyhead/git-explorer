@@ -163,7 +163,7 @@ struct SettingsView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 300)
+                    .frame(width: 300)
                 }
                 .settingsRow()
 
@@ -172,7 +172,7 @@ struct SettingsView: View {
                     SettingsLabeledRow("Organization") {
                         TextField("Organization name", text: $accountOrganization)
                             .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 300)
+                            .frame(width: 300)
                     }
                     .settingsRow()
                 }
@@ -182,7 +182,7 @@ struct SettingsView: View {
                     SecureField(accountProvider == .github ? "GitHub token" : "Azure DevOps token", text: $accountToken)
                         .textContentType(.password)
                         .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 300)
+                        .frame(width: 300)
                 }
                 .settingsRow()
 

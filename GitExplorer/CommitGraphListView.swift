@@ -600,7 +600,7 @@ private struct BranchPill: View {
         HStack(spacing: 4) {
             Label(
                 name,
-                systemImage: isCurrent || name == "HEAD" ? "location.fill" : "arrow.triangle.branch"
+                systemImage: isCurrent || name == "HEAD" ? "desktopcomputer" : "arrow.triangle.branch"
             )
             if includesRemote {
                 Image(systemName: "icloud.fill")

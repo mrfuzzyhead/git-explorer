@@ -19,7 +19,7 @@ struct GitExplorerApp: App {
         Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(model)
-                .frame(minWidth: 640, minHeight: 420)
+                .frame(minWidth: 760, minHeight: 420)
         }
         .defaultSize(width: 780, height: 500)
         .windowStyle(.hiddenTitleBar)
