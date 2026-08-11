@@ -28,6 +28,14 @@ final class FileExplorerTests: XCTestCase {
         XCTAssertNil(SourceLanguage(url: URL(fileURLWithPath: "/tmp/notes.txt")))
     }
 
+    func testRecognizesImageFilesCaseInsensitively() {
+        XCTAssertTrue(ExplorerFileType.isImage(URL(fileURLWithPath: "/tmp/screenshot.PNG")))
+        XCTAssertTrue(ExplorerFileType.isImage(URL(fileURLWithPath: "/tmp/photo.jpeg")))
+        XCTAssertTrue(ExplorerFileType.isImage(URL(fileURLWithPath: "/tmp/artwork.heic")))
+        XCTAssertFalse(ExplorerFileType.isImage(URL(fileURLWithPath: "/tmp/notes.txt")))
+        XCTAssertFalse(ExplorerFileType.isImage(URL(fileURLWithPath: "/tmp/no-extension")))
+    }
+
     func testHighlighterFindsKeywordsStringsCommentsAndNumbersWithoutChangingText() {
         let source = #"let answer = 42 // "not a string""#
         let tokens = SourceSyntaxHighlighter.tokens(in: source, as: .swift)

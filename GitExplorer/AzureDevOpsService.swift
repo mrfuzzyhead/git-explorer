@@ -532,6 +532,32 @@ actor AzureDevOpsService {
         return content
     }
 
+    func fileData(
+        repository: Repository,
+        path: String,
+        reference: String?,
+        organization: String,
+        token: String
+    ) async throws -> Data {
+        var query = [
+            URLQueryItem(name: "path", value: path.hasPrefix("/") ? path : "/" + path),
+            URLQueryItem(name: "download", value: "true"),
+            URLQueryItem(name: "$format", value: "octetStream"),
+            URLQueryItem(name: "api-version", value: "7.1")
+        ]
+        if let reference, !reference.isEmpty {
+            query.append(URLQueryItem(name: "versionDescriptor.version", value: reference))
+            query.append(URLQueryItem(name: "versionDescriptor.versionType", value: "branch"))
+        }
+        return try await request(
+            organization: organization,
+            project: repository.remoteProject,
+            path: "/_apis/git/repositories/\(try repositoryID(repository))/items",
+            query: query,
+            token: token
+        )
+    }
+
     private func repositoryID(_ repository: Repository) throws -> String {
         guard let id = repository.remoteIdentifier, !id.isEmpty else { throw AzureDevOpsError.invalidResponse }
         return id

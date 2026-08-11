@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FileBrowserView: View {
     let repository: Repository
@@ -373,8 +375,8 @@ private struct FileItemIcon: View {
         if url.isDirectory { return "folder.fill" }
         if MarkdownDocument.isMarkdownFile(url) { return "doc.richtext" }
         if SourceLanguage(url: url) != nil { return "chevron.left.forwardslash.chevron.right" }
+        if ExplorerFileType.isImage(url) { return "photo" }
         switch url.pathExtension.lowercased() {
-        case "png", "jpg", "jpeg", "gif", "heic", "webp": return "photo"
         case "json", "yml", "yaml": return "curlybraces"
         default: return "doc"
         }
@@ -395,7 +397,7 @@ private struct FilePreview: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "doc.text")
+                Image(systemName: ExplorerFileType.isImage(url) ? "photo" : "doc.text")
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(url.lastPathComponent)
@@ -408,7 +410,11 @@ private struct FilePreview: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
-                if let language = SourceLanguage(url: url) {
+                if ExplorerFileType.isImage(url) {
+                    Text("Image")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                } else if let language = SourceLanguage(url: url) {
                     Text(language.displayName)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -423,19 +429,18 @@ private struct FilePreview: View {
             .background(.bar)
             Divider()
 
-            if let contents {
+            if ExplorerFileType.isImage(url) {
+                LocalImagePreview(url: url)
+            } else if let contents {
                 preview(contents)
             } else if let readError {
-                ContentUnavailableView(
-                    "Preview unavailable",
-                    systemImage: "doc.badge.ellipsis",
-                    description: Text(readError)
-                )
+                FilePreviewFeedback(message: readError)
             } else {
                 PaneLoadingView("Loading preview…")
             }
         }
         .task {
+            guard !ExplorerFileType.isImage(url) else { return }
             do {
                 contents = try await Task.detached(priority: .userInitiated) {
                     try String(contentsOf: url, encoding: .utf8)
@@ -457,6 +462,79 @@ private struct FilePreview: View {
         } else {
             TextFilePreview(contents: contents, url: url)
         }
+    }
+}
+
+enum ExplorerFileType {
+    static func isImage(_ url: URL) -> Bool {
+        guard !url.pathExtension.isEmpty,
+              let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image)
+    }
+}
+
+private struct LocalImagePreview: View {
+    let url: URL
+    @State private var data: Data?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let data, let image = NSImage(data: data) {
+                ImagePreview(image: image)
+            } else if let errorMessage {
+                FilePreviewFeedback(message: errorMessage, systemImage: "photo.badge.exclamationmark")
+            } else {
+                PaneLoadingView("Loading image…")
+            }
+        }
+        .task {
+            do {
+                data = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: url, options: .mappedIfSafe)
+                }.value
+                if data.flatMap(NSImage.init(data:)) == nil {
+                    errorMessage = "This image format can’t be displayed."
+                }
+            } catch {
+                errorMessage = "This image can’t be read."
+            }
+        }
+    }
+}
+
+private struct ImagePreview: View {
+    let image: NSImage
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .padding(20)
+            .accessibilityLabel("Image preview")
+    }
+}
+
+private struct FilePreviewFeedback: View {
+    let message: String
+    var systemImage = "doc.badge.ellipsis"
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text("Preview unavailable")
+                .font(.headline)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -647,7 +725,7 @@ private struct RemoteFileTreeNode: View {
     private var label: some View {
         Button { selection = entry } label: {
             HStack(spacing: 8) {
-                Image(systemName: isRoot ? "shippingbox.fill" : entry.kind == .directory ? "folder.fill" : "doc")
+                Image(systemName: remoteIcon)
                     .foregroundStyle(entry.kind == .directory ? Color.blue : Color.accentColor)
                     .frame(width: 18)
                 Text(entry.name).lineLimit(1)
@@ -661,6 +739,12 @@ private struct RemoteFileTreeNode: View {
             shape: .rounded(5),
             selectedBackground: Color.accentColor.opacity(0.16)
         ))
+    }
+
+    private var remoteIcon: String {
+        if isRoot { return "shippingbox.fill" }
+        if entry.kind == .directory { return "folder.fill" }
+        return ExplorerFileType.isImage(URL(fileURLWithPath: entry.path)) ? "photo" : "doc"
     }
 
     private var expansion: Binding<Bool> {
@@ -694,7 +778,7 @@ private struct RemoteFolderPreview: View {
             List(entries ?? []) { entry in
                 Button { onSelect(entry) } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: entry.kind == .directory ? "folder.fill" : "doc")
+                        Image(systemName: remoteIcon(for: entry))
                             .foregroundStyle(entry.kind == .directory ? Color.blue : Color.accentColor)
                             .frame(width: 18)
                         Text(entry.name).lineLimit(1)
@@ -718,6 +802,11 @@ private struct RemoteFolderPreview: View {
             .listStyle(.inset)
         }
     }
+
+    private func remoteIcon(for entry: RemoteFileEntry) -> String {
+        if entry.kind == .directory { return "folder.fill" }
+        return ExplorerFileType.isImage(URL(fileURLWithPath: entry.path)) ? "photo" : "doc"
+    }
 }
 
 private struct RemoteFilePreview: View {
@@ -725,6 +814,7 @@ private struct RemoteFilePreview: View {
     let repository: Repository
     let entry: RemoteFileEntry
     @State private var contents: String?
+    @State private var imageData: Data?
     @State private var errorMessage: String?
 
     private var syntheticURL: URL { URL(fileURLWithPath: entry.path) }
@@ -748,7 +838,9 @@ private struct RemoteFilePreview: View {
             .background(.bar)
             Divider()
 
-            if let contents {
+            if let imageData, let image = NSImage(data: imageData) {
+                ImagePreview(image: image)
+            } else if let contents {
                 if MarkdownDocument.isMarkdownFile(syntheticURL) {
                     MarkdownPreviewView(
                         markdown: contents,
@@ -759,20 +851,40 @@ private struct RemoteFilePreview: View {
                     TextFilePreview(contents: contents, url: syntheticURL)
                 }
             } else if let errorMessage {
-                ContentUnavailableView("Preview unavailable", systemImage: "doc.badge.ellipsis", description: Text(errorMessage))
+                FilePreviewFeedback(
+                    message: errorMessage,
+                    systemImage: ExplorerFileType.isImage(syntheticURL)
+                        ? "photo.badge.exclamationmark"
+                        : "doc.badge.ellipsis"
+                )
             } else {
-                PaneLoadingView("Loading preview…")
+                PaneLoadingView(ExplorerFileType.isImage(syntheticURL) ? "Loading image…" : "Loading preview…")
             }
         }
         .task {
             do {
-                contents = try await model.remoteFileContents(
-                    for: repository,
-                    path: entry.path,
-                    reference: repository.defaultBranch
-                )
+                if ExplorerFileType.isImage(syntheticURL) {
+                    let data = try await model.remoteFileData(
+                        for: repository,
+                        path: entry.path,
+                        reference: repository.defaultBranch
+                    )
+                    guard NSImage(data: data) != nil else {
+                        errorMessage = "This image format can’t be displayed."
+                        return
+                    }
+                    imageData = data
+                } else {
+                    contents = try await model.remoteFileContents(
+                        for: repository,
+                        path: entry.path,
+                        reference: repository.defaultBranch
+                    )
+                }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = ExplorerFileType.isImage(syntheticURL)
+                    ? "This image can’t be downloaded."
+                    : error.localizedDescription
             }
         }
     }

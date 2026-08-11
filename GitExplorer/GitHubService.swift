@@ -285,18 +285,22 @@ actor GitHubService {
     }
 
     func fileContents(fullName: String, path: String, reference: String?, token: String) async throws -> String {
+        let data = try await fileData(fullName: fullName, path: path, reference: reference, token: token)
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw GitHubError.invalidResponse
+        }
+        return value
+    }
+
+    func fileData(fullName: String, path: String, reference: String?, token: String) async throws -> Data {
         let encodedPath = Self.encodedPath(path)
         let query = reference.map { [URLQueryItem(name: "ref", value: $0)] } ?? []
-        let data = try await request(
+        return try await request(
             path: "/repos/\(fullName)/contents/\(encodedPath)",
             query: query,
             token: token,
             accept: "application/vnd.github.raw+json"
         )
-        guard let value = String(data: data, encoding: .utf8) else {
-            throw GitHubError.invalidResponse
-        }
-        return value
     }
 
     private func request(

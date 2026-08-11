@@ -356,6 +356,30 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func remoteFileData(for repository: Repository, path: String, reference: String?) async throws -> Data {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else {
+                throw AzureDevOpsError.invalidOrganization
+            }
+            return try await azureDevOps.fileData(
+                repository: repository,
+                path: path,
+                reference: reference,
+                organization: organization,
+                token: token
+            )
+        case .github, .none:
+            return try await github.fileData(
+                fullName: repository.fullName,
+                path: path,
+                reference: reference,
+                token: token
+            )
+        }
+    }
+
     func chooseReposDirectory() async {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
