@@ -95,7 +95,7 @@ struct CommitDetailsPanel: View {
                             if let selectedFile {
                                 CommitDiffView(diff: details.fileDiffs[selectedFile] ?? "")
                             } else {
-                                CommitDetailsEmptyState(
+                                CommitDetailsFeedback(
                                     title: "Select a file",
                                     systemImage: "doc.text.magnifyingglass",
                                     description: "Choose a changed file to view its diff."
@@ -113,14 +113,13 @@ struct CommitDetailsPanel: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let loadError {
-                ContentUnavailableView(
-                    "Couldn’t load commit",
+                CommitDetailsFeedback(
+                    title: "Couldn’t load commit",
                     systemImage: "exclamationmark.triangle",
-                    description: Text(loadError)
+                    description: loadError
                 )
             } else {
-                ProgressView("Loading changed files…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                CommitDetailsFeedback(title: "Loading changed files…", isLoading: true)
             }
         }
         .background(.background)
@@ -214,12 +213,11 @@ struct CommitDetailsPanel: View {
             Divider()
 
             if files.isEmpty {
-                CommitDetailsEmptyState(
+                CommitDetailsFeedback(
                     title: "No files changed",
                     systemImage: "doc",
                     description: "This commit does not contain file changes."
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -248,25 +246,34 @@ struct CommitDetailsPanel: View {
     }
 }
 
-private struct CommitDetailsEmptyState: View {
+private struct CommitDetailsFeedback: View {
     let title: String
-    let systemImage: String
-    let description: String
+    var systemImage: String? = nil
+    var description: String? = nil
+    var isLoading = false
 
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.title2)
+            if isLoading {
+                ProgressView()
+                    .controlSize(.regular)
+            } else if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.title2)
+            }
 
             Text(title)
                 .font(.subheadline.weight(.semibold))
 
-            Text(description)
-                .font(.caption)
+            if let description {
+                Text(description)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
         }
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
-        .padding(16)
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
