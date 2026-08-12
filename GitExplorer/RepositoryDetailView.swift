@@ -1,13 +1,25 @@
 import SwiftUI
 
+enum RepositoryTab: String, CaseIterable, Identifiable {
+    case readme = "Readme"
+    case graph = "Graph"
+    case files = "Files"
+    case actions = "Actions"
+
+    static let defaultsKey = "repositoryDetail.selectedTab"
+
+    var id: Self { self }
+}
+
 struct RepositoryDetailView: View {
     let repository: Repository
+    @AppStorage(RepositoryTab.defaultsKey) private var selection = RepositoryTab.graph
 
     var body: some View {
         if repository.isLocal {
-            LocalRepositoryView(repository: repository)
+            LocalRepositoryView(repository: repository, selection: $selection)
         } else {
-            RemoteRepositoryView(repository: repository)
+            RemoteRepositoryView(repository: repository, selection: $selection)
         }
     }
 }
@@ -17,21 +29,13 @@ private struct RemoteRepositoryView: View {
     let repository: Repository
     @State private var readme: String?
     @State private var loading = true
-    @State private var selection = RemoteTab.graph
-
-    private enum RemoteTab: String, CaseIterable, Identifiable {
-        case readme = "Readme"
-        case graph = "Graph"
-        case files = "Files"
-        case actions = "Actions"
-        var id: Self { self }
-    }
+    @Binding var selection: RepositoryTab
 
     var body: some View {
         VStack(spacing: 0) {
             RepositoryHeader(repository: repository)
             Divider()
-            RepositoryViewBar(selection: $selection, tabs: RemoteTab.allCases) {
+            RepositoryViewBar(selection: $selection, tabs: RepositoryTab.allCases) {
                 Button {
                     Task { await model.clone(repository) }
                 } label: {
@@ -85,18 +89,10 @@ private struct RemoteRepositoryView: View {
 private struct LocalRepositoryView: View {
     @EnvironmentObject private var model: AppModel
     let repository: Repository
-    @State private var selection = LocalTab.graph
+    @Binding var selection: RepositoryTab
     @State private var statusState = LocalRepositoryStatusState.loading
     @State private var operation: RepositoryOperation?
     @State private var graphReloadToken = 0
-
-    enum LocalTab: String, CaseIterable, Identifiable {
-        case readme = "Readme"
-        case graph = "Graph"
-        case files = "Files"
-        case actions = "Actions"
-        var id: Self { self }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -105,7 +101,7 @@ private struct LocalRepositoryView: View {
                 localStatusState: statusState
             )
             Divider()
-            RepositoryViewBar(selection: $selection, tabs: LocalTab.allCases) {
+            RepositoryViewBar(selection: $selection, tabs: RepositoryTab.allCases) {
                 ForEach([RepositoryOperation.fetch, .pull, .push, .sync], id: \.rawValue) { item in
                     Button { perform(item) } label: {
                         Label(item.rawValue, systemImage: item.icon)
