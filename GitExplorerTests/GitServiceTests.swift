@@ -33,11 +33,78 @@ final class GitServiceTests: XCTestCase {
 
         XCTAssertEqual(run.id, 42)
         XCTAssertEqual(run.workflowTitle, "CI")
-        XCTAssertEqual(run.commitTitle, "Add Actions tab")
-        XCTAssertEqual(run.commitAuthor, "Commit Author")
+        XCTAssertEqual(run.commitTitle, "Fallback title")
+        XCTAssertEqual(run.commitAuthor, "trigger-user")
         XCTAssertEqual(run.branch, "feature/actions")
         XCTAssertEqual(run.displayStatus, .inProgress)
         XCTAssertTrue(page.hasMore)
+    }
+
+    func testWorkflowRunPageUsesDependabotRunIdentityInsteadOfHeadCommit() async throws {
+        let data = Data(#"""
+        {
+          "total_count": 1,
+          "workflow_runs": [
+            {
+              "id": 190,
+              "name": "npm_and_yarn in /. for @babel/core",
+              "display_title": "Dependabot Updates #190",
+              "status": "completed",
+              "conclusion": "success",
+              "head_branch": "main",
+              "html_url": "https://github.com/example/repo/actions/runs/190",
+              "created_at": "2026-08-13T20:25:00Z",
+              "run_started_at": "2026-08-13T20:25:00Z",
+              "updated_at": "2026-08-13T20:25:57Z",
+              "actor": { "login": "dependabot" },
+              "head_commit": {
+                "message": "Enhance adaptive card tools with new integrations",
+                "author": { "name": "Bradley Searle" }
+              }
+            }
+          ]
+        }
+        """#.utf8)
+
+        let page = try await GitHubService().workflowRunPage(from: data, offset: 0)
+        let run = try XCTUnwrap(page.runs.first)
+
+        XCTAssertEqual(run.workflowTitle, "npm_and_yarn in /. for @babel/core")
+        XCTAssertEqual(run.commitTitle, "Dependabot Updates #190")
+        XCTAssertEqual(run.commitAuthor, "dependabot")
+    }
+
+    func testWorkflowRunPageFallsBackToHeadCommitWhenRunIdentityIsMissing() async throws {
+        let data = Data(#"""
+        {
+          "total_count": 1,
+          "workflow_runs": [
+            {
+              "id": 43,
+              "name": null,
+              "display_title": null,
+              "status": "completed",
+              "conclusion": "success",
+              "head_branch": null,
+              "html_url": "https://github.com/example/repo/actions/runs/43",
+              "created_at": "2026-08-04T01:00:00Z",
+              "run_started_at": null,
+              "updated_at": "2026-08-04T01:02:00Z",
+              "actor": null,
+              "head_commit": {
+                "message": "Fallback commit title\n\nDetails.",
+                "author": { "name": "Fallback Author" }
+              }
+            }
+          ]
+        }
+        """#.utf8)
+
+        let page = try await GitHubService().workflowRunPage(from: data, offset: 0)
+        let run = try XCTUnwrap(page.runs.first)
+
+        XCTAssertEqual(run.commitTitle, "Fallback commit title")
+        XCTAssertEqual(run.commitAuthor, "Fallback Author")
     }
 
     func testAzurePipelineRunPageMapsBuildSummaryAndPagination() async throws {

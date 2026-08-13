@@ -178,15 +178,15 @@ actor GitHubService {
     func workflowRunPage(from data: Data, offset: Int) throws -> GitHubWorkflowRunPage {
         let response = try decoder.decode(APIWorkflowRunsResponse.self, from: data)
         let runs = response.workflow_runs.map { value in
-            let commitTitle = value.head_commit?.message
+            let headCommitTitle = value.head_commit?.message
                 .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
                 .first
                 .map(String.init)
             return GitHubWorkflowRun(
                 id: value.id,
                 workflowTitle: value.name ?? "GitHub Actions",
-                commitTitle: commitTitle ?? value.display_title ?? "Untitled run",
-                commitAuthor: value.head_commit?.author?.name ?? value.actor?.login ?? "Unknown",
+                commitTitle: value.display_title ?? headCommitTitle ?? "Untitled run",
+                commitAuthor: value.actor?.login ?? value.head_commit?.author?.name ?? "Unknown",
                 branch: value.head_branch ?? "Unknown branch",
                 status: value.status,
                 conclusion: value.conclusion,

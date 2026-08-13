@@ -685,11 +685,11 @@ private struct ActionsHeaderRow: View {
     var body: some View {
         HStack(spacing: 0) {
             header("Status", column: .status)
-            header("Commit", column: .commit)
+            header("Run", column: .commit)
             header("Elapsed", column: .elapsed)
             header("Started", column: .started)
             header("Workflow", column: .workflow)
-            header("Author", column: .author)
+            header("Actor", column: .author)
             header("Branch", column: .branch)
         }
         .frame(height: 28)
