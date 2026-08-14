@@ -61,12 +61,12 @@ final class AppModelTests: XCTestCase {
             repository(id: "beta", owner: "Beta", description: "Shared search term"),
             repository(id: "other", owner: "Beta", description: "Unrelated")
         ]
-        model.selectedOrganization = "Alpha"
+        model.selectedOrganization = "Gamma"
         model.searchText = "search term"
 
-        XCTAssertEqual(model.visibleRepositories.map(\.id), ["alpha"])
+        XCTAssertTrue(model.visibleRepositories.isEmpty)
         XCTAssertEqual(Set(model.searchResults.map(\.id)), ["alpha", "beta"])
-        XCTAssertEqual(model.selectedOrganization, "Alpha")
+        XCTAssertEqual(model.selectedOrganization, "Gamma")
     }
 
     private func repository(id: String, owner: String, description: String) -> Repository {

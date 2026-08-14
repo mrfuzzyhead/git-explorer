@@ -40,7 +40,7 @@ struct RepositorySidebar: View {
                     .background(.regularMaterial)
                 } else if isAwaitingSearchQuery {
                     EmptyView()
-                } else if model.visibleRepositories.isEmpty {
+                } else if flatRepositories.isEmpty {
                     if model.repositories.isEmpty {
                         ContentUnavailableView(
                             "No Repositories",
