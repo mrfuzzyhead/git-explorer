@@ -50,7 +50,17 @@ actor GitService {
         }
     }
 
-    func discoverRepositories(in directory: URL) throws -> [Repository] {
+    func discoverRepositories(in directory: URL) async throws -> [Repository] {
+        let executableURL = executableURL
+        return try await Task.detached(priority: .utility) {
+            try Self.discoverRepositories(in: directory, executableURL: executableURL)
+        }.value
+    }
+
+    private nonisolated static func discoverRepositories(
+        in directory: URL,
+        executableURL: URL?
+    ) throws -> [Repository] {
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
@@ -76,12 +86,21 @@ actor GitService {
                 continue
             }
             enumerator.skipDescendants()
-            let remote = try? run(["-C", url.path, "remote", "get-url", "origin"])
+            let remote = try? run(
+                ["-C", url.path, "remote", "get-url", "origin"],
+                executableURL: executableURL
+            )
             let remoteIdentity = remote.flatMap(Self.remoteRepositoryIdentity(from:))
             let fullName = remoteIdentity?.fullName ?? url.lastPathComponent
             let parts = fullName.split(separator: "/", maxSplits: 1).map(String.init)
-            let branch = try? run(["-C", url.path, "branch", "--show-current"])
-            let latestCommit = try? run(["-C", url.path, "log", "-1", "--format=%cI"])
+            let branch = try? run(
+                ["-C", url.path, "branch", "--show-current"],
+                executableURL: executableURL
+            )
+            let latestCommit = try? run(
+                ["-C", url.path, "log", "-1", "--format=%cI"],
+                executableURL: executableURL
+            )
             repositories.append(Repository(
                 id: fullName.lowercased(),
                 name: parts.last ?? url.lastPathComponent,
@@ -196,15 +215,38 @@ actor GitService {
         try push(at: repository)
     }
 
-    func commits(at repository: URL, limit: Int = 20_000, offset: Int = 0) throws -> [GitCommit] {
+    func commits(at repository: URL, limit: Int = 20_000, offset: Int = 0) async throws -> [GitCommit] {
+        let executableURL = executableURL
+        let fieldSeparator = fieldSeparator
+        let recordSeparator = recordSeparator
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.commits(
+                at: repository,
+                limit: limit,
+                offset: offset,
+                executableURL: executableURL,
+                fieldSeparator: fieldSeparator,
+                recordSeparator: recordSeparator
+            )
+        }.value
+    }
+
+    private nonisolated static func commits(
+        at repository: URL,
+        limit: Int,
+        offset: Int,
+        executableURL: URL?,
+        fieldSeparator: String,
+        recordSeparator: String
+    ) throws -> [GitCommit] {
         let format = "%H%x1f%P%x1f%an%x1f%aI%x1f%s%x1f%b%x1f%D%x1e"
         let raw = try run([
             "-C", repository.path, "log", "--all", "--topo-order",
             "--date-order", "--skip=\(offset)", "--max-count=\(limit)",
             "--pretty=format:\(format)"
-        ])
+        ], executableURL: executableURL)
         var commits = raw.split(separator: Character(recordSeparator), omittingEmptySubsequences: true)
-            .compactMap { parseCommit(String($0)) }
+            .compactMap { parseCommit(String($0), fieldSeparator: fieldSeparator) }
 
         var children: [String: [String]] = [:]
         for commit in commits {
@@ -214,12 +256,24 @@ actor GitService {
         return commits
     }
 
-    func commitPage(at repository: URL, offset: Int, limit: Int) throws -> GitCommitPage {
-        let results = try commits(at: repository, limit: limit + 1, offset: offset)
-        return GitCommitPage(
-            commits: Array(results.prefix(limit)),
-            hasMore: results.count > limit
-        )
+    func commitPage(at repository: URL, offset: Int, limit: Int) async throws -> GitCommitPage {
+        let executableURL = executableURL
+        let fieldSeparator = fieldSeparator
+        let recordSeparator = recordSeparator
+        return try await Task.detached(priority: .userInitiated) {
+            let results = try Self.commits(
+                at: repository,
+                limit: limit + 1,
+                offset: offset,
+                executableURL: executableURL,
+                fieldSeparator: fieldSeparator,
+                recordSeparator: recordSeparator
+            )
+            return GitCommitPage(
+                commits: Array(results.prefix(limit)),
+                hasMore: results.count > limit
+            )
+        }.value
     }
 
     func readREADME(at repository: URL) throws -> String? {
@@ -246,53 +300,60 @@ actor GitService {
         }
     }
 
-    func details(for commit: GitCommit, at repository: URL) throws -> CommitDetails {
-        let files = try run([
-            "-C", repository.path, "diff-tree", "--no-commit-id", "--name-status", "-r", commit.id
-        ]).split(separator: "\n").map(String.init)
-        var fileDiffs: [String: String] = [:]
-        for file in files {
-            guard let path = file.split(separator: "\t", omittingEmptySubsequences: false).last else {
-                continue
+    func details(for commit: GitCommit, at repository: URL) async throws -> CommitDetails {
+        let executableURL = executableURL
+        return try await Task.detached(priority: .userInitiated) {
+            let files = try Self.run([
+                "-C", repository.path, "diff-tree", "--no-commit-id", "--name-status", "-r", commit.id
+            ], executableURL: executableURL).split(separator: "\n").map(String.init)
+            var fileDiffs: [String: String] = [:]
+            for file in files {
+                guard let path = file.split(separator: "\t", omittingEmptySubsequences: false).last else {
+                    continue
+                }
+                fileDiffs[file] = try Self.run([
+                    "-C", repository.path, "show", "--format=", "--patch", "--no-ext-diff",
+                    commit.id, "--", String(path)
+                ], executableURL: executableURL)
             }
-            fileDiffs[file] = try run([
-                "-C", repository.path, "show", "--format=", "--patch", "--no-ext-diff",
-                commit.id, "--", String(path)
-            ])
-        }
-        return CommitDetails(commit: commit, changedFiles: files, fileDiffs: fileDiffs)
+            return CommitDetails(commit: commit, changedFiles: files, fileDiffs: fileDiffs)
+        }.value
     }
 
-    func workingTreeDetails(for commit: GitCommit, at repository: URL) throws -> CommitDetails {
-        let rawStatus = try run([
-            "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all"
-        ], trimmingOutput: false)
-        let changes = Self.parseWorkingTreeChanges(rawStatus)
-        var changedFiles: [String] = []
-        var fileDiffs: [String: String] = [:]
+    func workingTreeDetails(for commit: GitCommit, at repository: URL) async throws -> CommitDetails {
+        let executableURL = executableURL
+        return try await Task.detached(priority: .userInitiated) {
+            let rawStatus = try Self.run([
+                "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+            ], executableURL: executableURL, trimmingOutput: false)
+            let changes = Self.parseWorkingTreeChanges(rawStatus)
+            var changedFiles: [String] = []
+            var fileDiffs: [String: String] = [:]
 
-        for change in changes {
-            let key = "\(change.status)\t\(change.path)"
-            changedFiles.append(key)
+            for change in changes {
+                let key = "\(change.status)\t\(change.path)"
+                changedFiles.append(key)
 
-            if change.isUntracked {
-                fileDiffs[key] = try run(
-                    [
-                        "-C", repository.path, "diff", "--no-index", "--no-ext-diff",
-                        "--", "/dev/null", change.path
-                    ],
-                    allowedTerminationStatuses: [0, 1]
-                )
-            } else {
-                var paths = [change.path]
-                if let originalPath = change.originalPath { paths.append(originalPath) }
-                fileDiffs[key] = try run([
-                    "-C", repository.path, "diff", "HEAD", "--patch", "--no-ext-diff", "--"
-                ] + paths)
+                if change.isUntracked {
+                    fileDiffs[key] = try Self.run(
+                        [
+                            "-C", repository.path, "diff", "--no-index", "--no-ext-diff",
+                            "--", "/dev/null", change.path
+                        ],
+                        executableURL: executableURL,
+                        allowedTerminationStatuses: [0, 1]
+                    )
+                } else {
+                    var paths = [change.path]
+                    if let originalPath = change.originalPath { paths.append(originalPath) }
+                    fileDiffs[key] = try Self.run([
+                        "-C", repository.path, "diff", "HEAD", "--patch", "--no-ext-diff", "--"
+                    ] + paths, executableURL: executableURL)
+                }
             }
-        }
 
-        return CommitDetails(commit: commit, changedFiles: changedFiles, fileDiffs: fileDiffs)
+            return CommitDetails(commit: commit, changedFiles: changedFiles, fileDiffs: fileDiffs)
+        }.value
     }
 
     func mergeConflicts(at repository: URL) throws -> [MergeConflictFile] {
@@ -524,7 +585,10 @@ actor GitService {
         try !run(["-C", repository.path, "remote"]).isEmpty
     }
 
-    private func parseCommit(_ record: String) -> GitCommit? {
+    private nonisolated static func parseCommit(
+        _ record: String,
+        fieldSeparator: String
+    ) -> GitCommit? {
         let fields = record.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: fieldSeparator)
         guard fields.count >= 7 else { return nil }

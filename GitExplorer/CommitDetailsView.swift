@@ -13,113 +13,147 @@ struct CommitDetailsPanel: View {
     @State private var selectedFile: String?
     @State private var createCommitPresented = false
     @State private var resolveConflictsPresented = false
+    @AppStorage("commitDetails.messagePanelHeight") private var messagePanelHeight = 180.0
     @AppStorage("commitDetails.diffPanelHeight") private var diffPanelHeight = 360.0
-    @GestureState private var diffPanelDragOffset: CGFloat = 0
+    @State private var messagePanelDragOffset: CGFloat = 0
+    @State private var diffPanelDragOffset: CGFloat = 0
 
+    private let minimumMessagePanelHeight: CGFloat = 84
     private let minimumChangedFilesHeight: CGFloat = 120
     private let minimumDiffHeight: CGFloat = 180
-    private let resizeHandleHeight: CGFloat = 8
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .top, spacing: 12) {
-                    Text(commit.message)
-                        .font(.title2.bold())
-                        .lineLimit(3)
-                        .textSelection(.enabled)
+        GeometryReader { panelGeometry in
+            let resolvedMessagePanelHeight = clampedMessagePanelHeight(
+                CGFloat(messagePanelHeight) + messagePanelDragOffset,
+                containerHeight: panelGeometry.size.height
+            )
+
+            VStack(spacing: 0) {
+                ZStack(alignment: .topTrailing) {
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(commit.message)
+                                .font(.title2.bold())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if let description = commit.description {
+                                Text(description)
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
+
+                            if !isWorkingTree {
+                                HStack(spacing: 6) {
+                                    Label(commit.author, systemImage: "person.circle.fill")
+                                    Text("•")
+                                        .accessibilityHidden(true)
+                                    Text(CommitAgeFormatter.string(for: commit.timestamp))
+                                }
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 20)
+                        .padding(.trailing, isWorkingTree ? 210 : 64)
+                        .padding(.vertical, 20)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                    if isWorkingTree {
-                        Button(hasMergeConflicts ? "Resolve conflicts" : "Create commit") {
-                            if hasMergeConflicts {
-                                resolveConflictsPresented = true
-                            } else {
-                                createCommitPresented = true
+                    HStack(spacing: 12) {
+                        if isWorkingTree {
+                            Button(hasMergeConflicts ? "Resolve conflicts" : "Create commit") {
+                                if hasMergeConflicts {
+                                    resolveConflictsPresented = true
+                                } else {
+                                    createCommitPresented = true
+                                }
                             }
+                            .buttonStyle(.borderedProminent)
+                            .buttonBorderShape(.capsule)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.capsule)
-                    }
 
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .frame(width: 28, height: 28)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(ResponsiveButtonStyle(shape: .circle))
-                    .foregroundStyle(.secondary)
-                    .help("Close commit details")
-                    .accessibilityLabel("Close commit details")
-                }
-
-                if let description = commit.description {
-                    Text(description)
-                        .font(.body)
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(ResponsiveButtonStyle(shape: .circle))
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-
-                if !isWorkingTree {
-                    HStack(spacing: 6) {
-                        Label(commit.author, systemImage: "person.circle.fill")
-                        Text("•")
-                            .accessibilityHidden(true)
-                        Text(CommitAgeFormatter.string(for: commit.timestamp))
+                        .help("Close commit details")
+                        .accessibilityLabel("Close commit details")
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
+                    .padding(20)
                 }
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Divider()
-
-            if let details {
-                GeometryReader { geometry in
-                    let resolvedDiffHeight = clampedDiffPanelHeight(
-                        CGFloat(diffPanelHeight) - diffPanelDragOffset,
-                        containerHeight: geometry.size.height
-                    )
-
-                    VStack(spacing: 0) {
-                        changedFilesSection(details.changedFiles, selection: $selectedFile)
-                            .frame(height: max(0, geometry.size.height - resolvedDiffHeight - resizeHandleHeight))
-
-                        diffPanelResizeHandle(containerHeight: geometry.size.height)
-
-                        Group {
-                            if let selectedFile {
-                                CommitDiffView(diff: details.fileDiffs[selectedFile] ?? "")
-                            } else {
-                                CommitDetailsFeedback(
-                                    title: "Select a file",
-                                    systemImage: "doc.text.magnifyingglass",
-                                    description: "Choose a changed file to view its diff."
-                                )
-                            }
-                        }
-                        .frame(
-                            minWidth: 0,
-                            maxWidth: .infinity,
-                            maxHeight: .infinity,
-                            alignment: .topLeading
-                        )
-                        .frame(height: resolvedDiffHeight, alignment: .topLeading)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let loadError {
-                CommitDetailsFeedback(
-                    title: "Couldn’t load commit",
-                    systemImage: "exclamationmark.triangle",
-                    description: loadError
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: 0,
+                    maxHeight: .infinity,
+                    alignment: .topLeading
                 )
-            } else {
-                CommitDetailsFeedback(title: "Loading changed files…", isLoading: true)
+                .frame(height: resolvedMessagePanelHeight)
+
+                Divider()
+
+                if let details {
+                    GeometryReader { geometry in
+                        let resolvedDiffHeight = clampedDiffPanelHeight(
+                            CGFloat(diffPanelHeight) - diffPanelDragOffset,
+                            containerHeight: geometry.size.height
+                        )
+
+                        VStack(spacing: 0) {
+                            changedFilesSection(
+                                details.changedFiles,
+                                selection: $selectedFile,
+                                onResizeChanged: { translation in
+                                    messagePanelDragOffset = translation
+                                },
+                                onResizeEnded: { translation in
+                                    finishMessagePanelResize(
+                                        translation: translation,
+                                        containerHeight: panelGeometry.size.height
+                                    )
+                                }
+                            )
+                            .frame(height: max(0, geometry.size.height - resolvedDiffHeight))
+
+                            CommitDiffView(
+                                diff: selectedFile.flatMap { details.fileDiffs[$0] } ?? "",
+                                emptyTitle: selectedFile == nil ? "Select a file" : "No diff available",
+                                onResizeChanged: { translation in
+                                    diffPanelDragOffset = translation
+                                },
+                                onResizeEnded: { translation in
+                                    finishDiffPanelResize(
+                                        translation: translation,
+                                        containerHeight: geometry.size.height
+                                    )
+                                }
+                            )
+                            .frame(
+                                minWidth: 0,
+                                maxWidth: .infinity,
+                                maxHeight: .infinity,
+                                alignment: .topLeading
+                            )
+                            .frame(height: resolvedDiffHeight, alignment: .topLeading)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let loadError {
+                    CommitDetailsFeedback(
+                        title: "Couldn’t load commit",
+                        systemImage: "exclamationmark.triangle",
+                        description: loadError
+                    )
+                } else {
+                    CommitDetailsFeedback(title: "Loading changed files…", isLoading: true)
+                }
             }
         }
         .background(.background)
@@ -154,8 +188,33 @@ struct CommitDetailsPanel: View {
         }
     }
 
+    private func clampedMessagePanelHeight(
+        _ proposedHeight: CGFloat,
+        containerHeight: CGFloat
+    ) -> CGFloat {
+        let maximumHeight = max(
+            0,
+            containerHeight - minimumChangedFilesHeight - minimumDiffHeight
+        )
+        let effectiveMinimumHeight = min(minimumMessagePanelHeight, maximumHeight)
+        return min(max(proposedHeight, effectiveMinimumHeight), maximumHeight)
+    }
+
+    private func finishMessagePanelResize(translation: CGFloat, containerHeight: CGFloat) {
+        let resolvedHeight = clampedMessagePanelHeight(
+            CGFloat(messagePanelHeight) + translation,
+            containerHeight: containerHeight
+        )
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            messagePanelHeight = Double(resolvedHeight)
+            messagePanelDragOffset = 0
+        }
+    }
+
     private func clampedDiffPanelHeight(_ proposedHeight: CGFloat, containerHeight: CGFloat) -> CGFloat {
-        let availableHeight = max(0, containerHeight - resizeHandleHeight)
+        let availableHeight = max(0, containerHeight)
         let effectiveMinimumDiffHeight = min(minimumDiffHeight, availableHeight)
         let effectiveMinimumChangedFilesHeight = min(
             minimumChangedFilesHeight,
@@ -168,47 +227,40 @@ struct CommitDetailsPanel: View {
         return min(max(proposedHeight, effectiveMinimumDiffHeight), maximumDiffHeight)
     }
 
-    private func diffPanelResizeHandle(containerHeight: CGFloat) -> some View {
-        Rectangle()
-            .fill(.clear)
-            .frame(height: resizeHandleHeight)
-            .overlay {
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .updating($diffPanelDragOffset) { value, offset, transaction in
-                        transaction.animation = nil
-                        offset = value.translation.height
-                    }
-                    .onEnded { value in
-                        let resolvedHeight = clampedDiffPanelHeight(
-                            CGFloat(diffPanelHeight) - value.translation.height,
-                            containerHeight: containerHeight
-                        )
-                        var transaction = Transaction()
-                        transaction.animation = nil
-                        withTransaction(transaction) {
-                            diffPanelHeight = Double(resolvedHeight)
-                        }
-                    }
-            )
-            .help("Drag to resize the diff panel")
+    private func finishDiffPanelResize(translation: CGFloat, containerHeight: CGFloat) {
+        let resolvedHeight = clampedDiffPanelHeight(
+            CGFloat(diffPanelHeight) - translation,
+            containerHeight: containerHeight
+        )
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            diffPanelHeight = Double(resolvedHeight)
+            diffPanelDragOffset = 0
+        }
     }
 
     private func fileCountSubtitle(_ count: Int) -> String {
         "\(count) \(count == 1 ? "file" : "files") changed"
     }
 
-    private func changedFilesSection(_ files: [String], selection: Binding<String?>) -> some View {
+    private func changedFilesSection(
+        _ files: [String],
+        selection: Binding<String?>,
+        onResizeChanged: @escaping (CGFloat) -> Void,
+        onResizeEnded: @escaping (CGFloat) -> Void
+    ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(fileCountSubtitle(files.count))
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(VerticalSplitResizeModifier(
+                    helpText: "Drag to resize the commit details and changed files views",
+                    onChanged: onResizeChanged,
+                    onEnded: onResizeEnded
+                ))
 
             Divider()
 

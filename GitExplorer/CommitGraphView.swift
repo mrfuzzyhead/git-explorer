@@ -191,7 +191,17 @@ struct CommitGraphView: View {
                         }
                     }
             )
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    NSCursor.resizeLeftRight.set()
+                case .ended:
+                    NSCursor.arrow.set()
+                }
+            }
+            .onDisappear { NSCursor.arrow.set() }
             .help("Drag to resize the commit preview")
+            .accessibilityLabel("Resize commit preview")
     }
 
     private var pageSize: Int { repository.isLocal ? 500 : 100 }

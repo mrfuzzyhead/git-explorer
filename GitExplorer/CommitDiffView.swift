@@ -2,6 +2,9 @@ import SwiftUI
 
 struct CommitDiffView: View {
     let diff: String
+    let emptyTitle: String
+    let onResizeChanged: (CGFloat) -> Void
+    let onResizeEnded: (CGFloat) -> Void
 
     private var document: DiffDocument {
         DiffDocument(diff)
@@ -30,12 +33,19 @@ struct CommitDiffView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .top) { Divider() }
+            .modifier(VerticalSplitResizeModifier(
+                helpText: "Drag to resize the changed files and diff views",
+                onChanged: onResizeChanged,
+                onEnded: onResizeEnded
+            ))
 
             Divider()
 
             if diff.isEmpty {
                 ContentUnavailableView(
-                    "No diff available",
+                    emptyTitle,
                     systemImage: "doc.text.magnifyingglass"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -65,6 +75,36 @@ struct CommitDiffView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct VerticalSplitResizeModifier: ViewModifier {
+    let helpText: String
+    let onChanged: (CGFloat) -> Void
+    let onEnded: (CGFloat) -> Void
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        NSCursor.resizeUpDown.set()
+                        onChanged(value.translation.height)
+                    }
+                    .onEnded { value in
+                        onEnded(value.translation.height)
+                        (isHovered ? NSCursor.resizeUpDown : NSCursor.arrow).set()
+                    }
+            )
+            .onHover { isHovering in
+                isHovered = isHovering
+                (isHovering ? NSCursor.resizeUpDown : NSCursor.arrow).set()
+            }
+            .onDisappear { NSCursor.arrow.set() }
+            .help(helpText)
+            .accessibilityLabel(helpText)
     }
 }
 
