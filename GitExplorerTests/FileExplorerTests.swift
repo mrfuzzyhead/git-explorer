@@ -46,3 +46,42 @@ final class FileExplorerTests: XCTestCase {
         XCTAssertEqual(tokens.map(\.text).joined(), source)
     }
 }
+
+@MainActor
+final class AppModelTests: XCTestCase {
+    func testSearchResultsIgnoreSelectedOrganization() {
+        let defaults = UserDefaults(suiteName: #function)!
+        defaults.removePersistentDomain(forName: #function)
+        defaults.set(true, forKey: "sourceControlAccounts.didMigrateLegacyGitHub.v1")
+        defer { defaults.removePersistentDomain(forName: #function) }
+
+        let model = AppModel(defaults: defaults)
+        model.repositories = [
+            repository(id: "alpha", owner: "Alpha", description: "Shared search term"),
+            repository(id: "beta", owner: "Beta", description: "Shared search term"),
+            repository(id: "other", owner: "Beta", description: "Unrelated")
+        ]
+        model.selectedOrganization = "Alpha"
+        model.searchText = "search term"
+
+        XCTAssertEqual(model.visibleRepositories.map(\.id), ["alpha"])
+        XCTAssertEqual(Set(model.searchResults.map(\.id)), ["alpha", "beta"])
+        XCTAssertEqual(model.selectedOrganization, "Alpha")
+    }
+
+    private func repository(id: String, owner: String, description: String) -> Repository {
+        Repository(
+            id: id,
+            name: id,
+            fullName: "\(owner)/\(id)",
+            owner: owner,
+            description: description,
+            webURL: nil,
+            cloneURL: nil,
+            defaultBranch: nil,
+            isPrivate: false,
+            localURL: nil,
+            updatedAt: nil
+        )
+    }
+}

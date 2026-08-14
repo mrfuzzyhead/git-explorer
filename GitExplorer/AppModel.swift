@@ -72,8 +72,18 @@ final class AppModel: ObservableObject {
     }
 
     var visibleRepositories: [Repository] {
+        filteredRepositories(includeOrganizationFilter: true)
+    }
+
+    var searchResults: [Repository] {
+        filteredRepositories(includeOrganizationFilter: false)
+    }
+
+    private func filteredRepositories(includeOrganizationFilter: Bool) -> [Repository] {
         repositories.filter { repository in
-            let matchesOrganization = selectedOrganization == "All" || repository.owner == selectedOrganization
+            let matchesOrganization = !includeOrganizationFilter ||
+                selectedOrganization == "All" ||
+                repository.owner == selectedOrganization
             let matchesFilter = switch repositoryFilter {
             case .all: true
             case .local: repository.isLocal

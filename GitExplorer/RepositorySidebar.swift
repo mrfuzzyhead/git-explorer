@@ -243,7 +243,7 @@ struct RepositorySidebar: View {
     }
 
     private var showsOrganizationGroups: Bool {
-        model.selectedOrganization == "All"
+        isSearchPresented || model.selectedOrganization == "All"
     }
 
     private var groupedOwners: [(owner: String, repositories: [Repository])] {
@@ -253,7 +253,8 @@ struct RepositorySidebar: View {
     }
 
     private var flatRepositories: [Repository] {
-        isAwaitingSearchQuery ? [] : model.visibleRepositories
+        guard !isAwaitingSearchQuery else { return [] }
+        return isSearchPresented ? model.searchResults : model.visibleRepositories
     }
 
     private var isAwaitingSearchQuery: Bool {
