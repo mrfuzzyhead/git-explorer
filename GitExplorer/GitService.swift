@@ -548,8 +548,45 @@ actor GitService {
         return "Authorization: Basic \(credentials)"
     }
 
-    func checkout(branch: String, at repository: URL) throws {
-        _ = try run(["-C", repository.path, "checkout", branch])
+    func switchWorkingTree(to branch: String, at repository: URL) throws {
+        if try referenceExists("refs/heads/\(branch)", at: repository) {
+            _ = try run(["-C", repository.path, "switch", branch])
+            return
+        }
+
+        if try referenceExists("refs/remotes/\(branch)", at: repository),
+           let localBranch = try localBranchName(forRemoteBranch: branch, at: repository) {
+            if try referenceExists("refs/heads/\(localBranch)", at: repository) {
+                _ = try run(["-C", repository.path, "switch", localBranch])
+            } else {
+                _ = try run([
+                    "-C", repository.path, "switch", "--track", "-c", localBranch, branch
+                ])
+            }
+            return
+        }
+
+        _ = try run(["-C", repository.path, "switch", branch])
+    }
+
+    private func referenceExists(_ reference: String, at repository: URL) throws -> Bool {
+        try run([
+            "-C", repository.path, "for-each-ref", "--format=%(refname)", reference
+        ])
+        .split(separator: "\n")
+        .contains(Substring(reference))
+    }
+
+    private func localBranchName(forRemoteBranch branch: String, at repository: URL) throws -> String? {
+        let remotes = try run(["-C", repository.path, "remote"])
+            .split(separator: "\n")
+            .map(String.init)
+            .sorted { $0.count > $1.count }
+        guard let remote = remotes.first(where: { branch.hasPrefix("\($0)/") }) else {
+            return nil
+        }
+        let localBranch = String(branch.dropFirst(remote.count + 1))
+        return localBranch.isEmpty ? nil : localBranch
     }
 
     func recentBranches(at repository: URL, limit: Int = 8) throws -> [String] {

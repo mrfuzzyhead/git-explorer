@@ -554,7 +554,7 @@ final class GitServiceTests: XCTestCase {
 
         let service = GitService()
         try await service.createBranch("feature", at: baseCommit, in: repository)
-        try await service.checkout(branch: "feature", at: repository)
+        try await service.switchWorkingTree(to: "feature", at: repository)
         try write("feature\n", to: repository.appendingPathComponent("feature.txt"))
         try git(["add", "."], at: repository)
         try git(["commit", "-m", "Feature"], at: repository)
@@ -571,6 +571,43 @@ final class GitServiceTests: XCTestCase {
         XCTAssertEqual(
             try git(["rev-parse", "main"], at: repository),
             try git(["rev-parse", "feature"], at: repository)
+        )
+    }
+
+    func testSwitchingToRemoteBranchCreatesAndReusesLocalTrackingBranch() async throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerRemoteBranchFixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repository) }
+
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Git Explorer Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        try write("base\n", to: repository.appendingPathComponent("history.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Base"], at: repository)
+        try git(["remote", "add", "origin", "https://example.invalid/project.git"], at: repository)
+        try git(["update-ref", "refs/remotes/origin/release", "HEAD"], at: repository)
+
+        let service = GitService()
+        try await service.switchWorkingTree(to: "origin/release", at: repository)
+        XCTAssertEqual(
+            try git(["branch", "--show-current"], at: repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "release"
+        )
+        XCTAssertEqual(
+            try git(["rev-parse", "--abbrev-ref", "release@{upstream}"], at: repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "origin/release"
+        )
+
+        try git(["switch", "main"], at: repository)
+        try await service.switchWorkingTree(to: "origin/release", at: repository)
+        XCTAssertEqual(
+            try git(["branch", "--show-current"], at: repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "release"
         )
     }
 

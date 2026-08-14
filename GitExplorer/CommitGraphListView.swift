@@ -412,6 +412,7 @@ private struct CommitReferenceColumn: View {
                     divergence: repositoryStatus?.divergence(for: branch.actionName),
                     isCurrent: commit.isHead && repositoryStatus?.branch == branch.actionName,
                     includesRemote: branch.includesRemote,
+                    isRemote: branch.isRemote,
                     actionName: branch.actionName,
                     commitID: commit.id,
                     recentBranches: recentBranches,
@@ -583,6 +584,7 @@ private struct BranchPill: View {
     let divergence: BranchDivergence?
     var isCurrent = false
     var includesRemote = false
+    var isRemote = false
     var actionName: String?
     let commitID: String
     let recentBranches: [String]
@@ -591,9 +593,10 @@ private struct BranchPill: View {
     let action: (BranchMenuAction) -> Void
 
     private var branch: String { actionName ?? name }
-    private var isActionable: Bool {
-        canManage && branch != "HEAD" && branch != "Detached HEAD" && !branch.hasPrefix("origin/")
+    private var canSwitch: Bool {
+        canManage && branch != "HEAD" && branch != "Detached HEAD"
     }
+    private var canModify: Bool { canSwitch && !isRemote }
     private var mergeTargets: [String] { recentBranches.filter { $0 != branch } }
 
     var body: some View {
@@ -622,8 +625,11 @@ private struct BranchPill: View {
         .background(color.opacity(0.14), in: Capsule())
         .foregroundStyle(color)
         .contextMenu {
-            if isActionable {
-                Button("Checkout") { action(.checkout(branch)) }
+            if canSwitch {
+                Button("Switch Working Tree") { action(.switchWorkingTree(branch)) }
+                    .disabled(isCurrent)
+            }
+            if canModify {
                 Button("Rename") { action(.rename(branch)) }
                 Button("Create branch here") {
                     action(.createBranch(source: branch, commitID: commitID))
@@ -639,12 +645,12 @@ private struct BranchPill: View {
                 }
             }
         }
-        .help(isActionable ? "Right-click for branch actions" : name)
+        .help(canSwitch ? "Right-click for branch actions" : name)
     }
 }
 
 enum BranchMenuAction: Equatable {
-    case checkout(String)
+    case switchWorkingTree(String)
     case rename(String)
     case createBranch(source: String, commitID: String)
     case merge(source: String, target: String)

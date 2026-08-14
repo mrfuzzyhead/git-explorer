@@ -42,7 +42,9 @@ final class GitGraphLayoutTests: XCTestCase {
             CommitReferencePresentation.branchLabels(
                 for: ["origin/HEAD", "master", "origin/master"]
             ),
-            [CommitBranchLabel(name: "master", actionName: "master", includesRemote: true)]
+            [CommitBranchLabel(
+                name: "master", actionName: "master", includesRemote: true, isRemote: false
+            )]
         )
     }
 
@@ -52,8 +54,12 @@ final class GitGraphLayoutTests: XCTestCase {
         )
 
         XCTAssertEqual(labels, [
-            CommitBranchLabel(name: "main", actionName: "main", includesRemote: true),
-            CommitBranchLabel(name: "feature", actionName: "feature", includesRemote: false)
+            CommitBranchLabel(
+                name: "main", actionName: "main", includesRemote: true, isRemote: false
+            ),
+            CommitBranchLabel(
+                name: "feature", actionName: "feature", includesRemote: false, isRemote: false
+            )
         ])
     }
 
@@ -63,7 +69,8 @@ final class GitGraphLayoutTests: XCTestCase {
             [CommitBranchLabel(
                 name: "origin/release",
                 actionName: "origin/release",
-                includesRemote: false
+                includesRemote: false,
+                isRemote: true
             )]
         )
     }

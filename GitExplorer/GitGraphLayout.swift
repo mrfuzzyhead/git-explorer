@@ -51,6 +51,7 @@ struct CommitBranchLabel: Equatable {
     let name: String
     let actionName: String
     let includesRemote: Bool
+    let isRemote: Bool
 }
 
 enum CommitReferencePresentation {
@@ -72,7 +73,8 @@ enum CommitReferencePresentation {
             labels.append(CommitBranchLabel(
                 name: branch,
                 actionName: branch,
-                includesRemote: names.contains(remoteName)
+                includesRemote: names.contains(remoteName),
+                isRemote: branch.hasPrefix("origin/")
             ))
         }
 

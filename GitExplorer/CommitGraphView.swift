@@ -375,9 +375,9 @@ struct CommitGraphView: View {
 
     private func handleBranchMenuAction(_ action: BranchMenuAction) {
         switch action {
-        case let .checkout(branch):
+        case let .switchWorkingTree(branch):
             selectedBranch = branch
-            performBranchAction(.checkout)
+            performBranchAction(.switchWorkingTree)
         case let .rename(branch):
             selectedBranch = branch
             renamedBranch = branch
@@ -404,7 +404,8 @@ struct CommitGraphView: View {
             )
             do {
                 switch action {
-                case .checkout: try await model.git.checkout(branch: branch, at: url)
+                case .switchWorkingTree:
+                    try await model.git.switchWorkingTree(to: branch, at: url)
                 case let .rename(newName):
                     try await model.git.rename(branch: branch, to: newName, at: url)
                 case let .create(newName, commitID):
@@ -452,12 +453,12 @@ struct CommitGraphView: View {
 }
 
 private enum BranchAction {
-    case checkout, rename(String), create(String, String), merge(target: String)
+    case switchWorkingTree, rename(String), create(String, String), merge(target: String)
     var requiresReload: Bool { true }
 
     func progressTitle(for branch: String) -> String {
         switch self {
-        case .checkout: "Checking out \(branch)…"
+        case .switchWorkingTree: "Switching to \(branch)…"
         case .rename: "Renaming \(branch)…"
         case .create: "Creating branch…"
         case let .merge(target): "Merging \(branch) into \(target)…"
@@ -466,7 +467,7 @@ private enum BranchAction {
 
     var successTitle: String {
         switch self {
-        case .checkout: "Checkout complete"
+        case .switchWorkingTree: "Working tree switched"
         case .rename: "Branch renamed"
         case .create: "Branch created"
         case .merge: "Merge complete"
@@ -475,7 +476,7 @@ private enum BranchAction {
 
     var failureTitle: String {
         switch self {
-        case .checkout: "Checkout failed"
+        case .switchWorkingTree: "Couldn’t switch working tree"
         case .rename: "Rename failed"
         case .create: "Create branch failed"
         case .merge: "Merge failed"
