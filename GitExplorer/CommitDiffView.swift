@@ -44,11 +44,10 @@ struct CommitDiffView: View {
             Divider()
 
             if diff.isEmpty {
-                ContentUnavailableView(
-                    emptyTitle,
+                CommitDetailsFeedback(
+                    title: emptyTitle,
                     systemImage: "doc.text.magnifyingglass"
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 GeometryReader { geometry in
                     ScrollView([.vertical, .horizontal]) {

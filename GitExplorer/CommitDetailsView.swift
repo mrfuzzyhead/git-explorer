@@ -97,8 +97,6 @@ struct CommitDetailsPanel: View {
                 )
                 .frame(height: resolvedMessagePanelHeight)
 
-                Divider()
-
                 if let details {
                     GeometryReader { geometry in
                         let resolvedDiffHeight = clampedDiffPanelHeight(
@@ -251,11 +249,14 @@ struct CommitDetailsPanel: View {
         onResizeEnded: @escaping (CGFloat) -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(fileCountSubtitle(files.count))
-                .font(.subheadline.weight(.semibold))
+            HStack {
+                Text(fileCountSubtitle(files.count))
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 0)
+            }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36)
+                .overlay(alignment: .top) { Divider() }
                 .modifier(VerticalSplitResizeModifier(
                     helpText: "Drag to resize the commit details and changed files views",
                     onChanged: onResizeChanged,
@@ -298,7 +299,7 @@ struct CommitDetailsPanel: View {
     }
 }
 
-private struct CommitDetailsFeedback: View {
+struct CommitDetailsFeedback: View {
     let title: String
     var systemImage: String? = nil
     var description: String? = nil
