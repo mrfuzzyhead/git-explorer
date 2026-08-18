@@ -498,6 +498,34 @@ actor GitService {
         _ = try run(["-C", repository.path, "reset", "--"] + paths)
     }
 
+    func discardWorkingTreeChanges(_ files: [WorkingTreeFile], at repository: URL) throws {
+        let paths = Self.paths(for: files)
+        guard !paths.isEmpty else { return }
+
+        let environment = ["GIT_LITERAL_PATHSPECS": "1"]
+        let trackedOutput = try run(
+            ["-C", repository.path, "ls-files", "-z", "--cached", "--"] + paths,
+            environment: environment,
+            trimmingOutput: false
+        )
+        let trackedPaths = Set(trackedOutput.split(separator: "\0").map(String.init))
+        let tracked = paths.filter { trackedPaths.contains($0) }
+        let untracked = paths.filter { !trackedPaths.contains($0) }
+
+        if !tracked.isEmpty {
+            _ = try run(
+                ["-C", repository.path, "restore", "--worktree", "--"] + tracked,
+                environment: environment
+            )
+        }
+        if !untracked.isEmpty {
+            _ = try run(
+                ["-C", repository.path, "clean", "-f", "--"] + untracked,
+                environment: environment
+            )
+        }
+    }
+
     func stagedDiff(at repository: URL) throws -> String {
         try run(["-C", repository.path, "diff", "--cached", "--patch", "--no-ext-diff"])
     }

@@ -496,6 +496,54 @@ final class GitServiceTests: XCTestCase {
 
     }
 
+    func testDiscardWorkingTreeChangesHandlesTrackedDeletedAndUntrackedFiles() async throws {
+        let repository = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerDiscardFixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repository) }
+
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Git Explorer Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        try write("base\n", to: repository.appendingPathComponent("modified.txt"))
+        try write("keep me\n", to: repository.appendingPathComponent("deleted.txt"))
+        try write("base\n", to: repository.appendingPathComponent("unrelated.txt"))
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Base"], at: repository)
+
+        try write("staged\n", to: repository.appendingPathComponent("modified.txt"))
+        try git(["add", "modified.txt"], at: repository)
+        try write("unstaged\n", to: repository.appendingPathComponent("modified.txt"))
+        try FileManager.default.removeItem(at: repository.appendingPathComponent("deleted.txt"))
+        try write("new\n", to: repository.appendingPathComponent("untracked.txt"))
+        try write("leave dirty\n", to: repository.appendingPathComponent("unrelated.txt"))
+
+        let service = GitService()
+        var state = try await service.workingTreeState(at: repository)
+        let selected = state.unstaged.filter {
+            ["modified.txt", "deleted.txt", "untracked.txt"].contains($0.path)
+        }
+        XCTAssertEqual(selected.count, 3)
+
+        try await service.discardWorkingTreeChanges(selected, at: repository)
+
+        XCTAssertEqual(
+            try String(contentsOf: repository.appendingPathComponent("modified.txt"), encoding: .utf8),
+            "staged\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repository.appendingPathComponent("deleted.txt"), encoding: .utf8),
+            "keep me\n"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: repository.appendingPathComponent("untracked.txt").path
+        ))
+
+        state = try await service.workingTreeState(at: repository)
+        XCTAssertEqual(state.unstaged.map(\.path), ["unrelated.txt"])
+        XCTAssertEqual(state.staged.map(\.path), ["modified.txt"])
+    }
+
     func testCommitMessageGeneratorEnforcesSubjectBestPractices() throws {
         let longSubject = "Add a deliberately verbose generated commit subject that runs well beyond the accepted Git subject line character limit"
         let message = try CommitMessageGenerator.bestPracticeMessage(from: "\(longSubject).\n\nExplain the change.")

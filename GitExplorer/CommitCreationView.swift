@@ -16,6 +16,8 @@ struct CommitCreationView: View {
     @State private var isGenerating = false
     @State private var pushAfterCommit = false
     @State private var pushDestination: String?
+    @State private var filesPendingDiscard: [WorkingTreeFile] = []
+    @State private var isConfirmingDiscard = false
 
     private let messageGenerator = CommitMessageGenerator()
 
@@ -169,6 +171,21 @@ struct CommitCreationView: View {
             maxHeight: .infinity
         )
         .task { await reload() }
+        .confirmationDialog(
+            discardConfirmationTitle,
+            isPresented: $isConfirmingDiscard,
+            titleVisibility: .visible
+        ) {
+            Button(discardConfirmationButtonTitle, role: .destructive) {
+                discard(filesPendingDiscard)
+                filesPendingDiscard = []
+            }
+            Button("Cancel", role: .cancel) {
+                filesPendingDiscard = []
+            }
+        } message: {
+            Text(discardConfirmationMessage)
+        }
     }
 
     private func fileColumn(
@@ -246,7 +263,8 @@ struct CommitCreationView: View {
         for selectedIDs: Set<WorkingTreeFile.ID>,
         files: [WorkingTreeFile]
     ) -> some View {
-        let paths = files.filter { selectedIDs.contains($0.id) }.map(\.path)
+        let selectedFiles = files.filter { selectedIDs.contains($0.id) }
+        let paths = selectedFiles.map(\.path)
         if paths.count == 1, let path = paths.first {
             ForEach(Self.ignorePatterns(for: path), id: \.self) { pattern in
                 Button("Ignore \"\(pattern)\"") {
@@ -257,6 +275,15 @@ struct CommitCreationView: View {
             Button("Ignore selected files") {
                 ignore(paths)
             }
+        }
+
+        if !selectedFiles.isEmpty {
+            Divider()
+            Button(discardMenuTitle(for: selectedFiles), role: .destructive) {
+                filesPendingDiscard = selectedFiles
+                isConfirmingDiscard = true
+            }
+            .disabled(isMutating)
         }
     }
 
@@ -278,6 +305,31 @@ struct CommitCreationView: View {
         mutate {
             try await model.git.addIgnorePatterns(patterns, at: repository.localURL!)
         }
+    }
+
+    private func discard(_ files: [WorkingTreeFile]) {
+        mutate {
+            try await model.git.discardWorkingTreeChanges(files, at: repository.localURL!)
+        }
+    }
+
+    private func discardMenuTitle(for files: [WorkingTreeFile]) -> String {
+        files.count == 1 ? "Discard Changes…" : "Discard Changes in \(files.count) Files…"
+    }
+
+    private var discardConfirmationTitle: String {
+        filesPendingDiscard.count == 1
+            ? "Discard changes in \(filesPendingDiscard[0].path)?"
+            : "Discard changes in \(filesPendingDiscard.count) files?"
+    }
+
+    private var discardConfirmationButtonTitle: String {
+        filesPendingDiscard.count == 1 ? "Discard Changes" : "Discard All Changes"
+    }
+
+    private var discardConfirmationMessage: String {
+        "Tracked files will be restored to their staged or last committed contents. " +
+        "Selected untracked files will be permanently deleted. This can’t be undone."
     }
 
     private func mutate(_ operation: @escaping () async throws -> Void) {
