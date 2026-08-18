@@ -152,6 +152,11 @@ struct RepositoryStatus: Equatable {
     }
 }
 
+struct DashboardStatusReport: Equatable {
+    var statuses: [Repository.ID: RepositoryStatus] = [:]
+    var errors: [Repository.ID: String] = [:]
+}
+
 struct BranchDivergence: Equatable {
     let ahead: Int
     let behind: Int

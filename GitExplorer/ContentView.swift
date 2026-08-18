@@ -104,7 +104,9 @@ struct ContentView: View {
                     max: 480
                 )
         } detail: {
-            if let repository = model.selectedRepository {
+            if model.isDashboardPresented {
+                DashboardView()
+            } else if let repository = model.selectedRepository {
                 RepositoryDetailView(repository: repository)
                     .id(repository.id)
             } else {
@@ -113,6 +115,20 @@ struct ContentView: View {
                     systemImage: "point.3.connected.trianglepath.dotted",
                     description: Text("Choose a repository from the sidebar to explore it.")
                 )
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.showDashboard()
+                } label: {
+                    Label("Dashboard", systemImage: "rectangle.3.group")
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .tint(model.isDashboardPresented ? .accentColor : nil)
+                .accessibilityAddTraits(model.isDashboardPresented ? .isSelected : [])
+                .help("Open Dashboard")
             }
         }
         .overlay(alignment: .topTrailing) {

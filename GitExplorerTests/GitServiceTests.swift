@@ -304,6 +304,61 @@ final class GitServiceTests: XCTestCase {
         XCTAssertTrue(version.hasPrefix("git version"))
     }
 
+    func testParsesDashboardStatusFromSinglePorcelainResponse() {
+        let status = GitService.parseStatus(#"""
+        # branch.oid 0123456789abcdef
+        # branch.head feature/dashboard
+        # branch.upstream origin/feature/dashboard
+        # branch.ab +2 -1
+        1 .M N... 100644 100644 100644 0123456 0123456 README.md
+        u UU N... 100644 100644 100644 100644 0123456 1234567 2345678 Conflict.swift
+        """#)
+
+        XCTAssertEqual(status.branch, "feature/dashboard")
+        XCTAssertEqual(status.upstream, "origin/feature/dashboard")
+        XCTAssertEqual(status.ahead, 2)
+        XCTAssertEqual(status.behind, 1)
+        XCTAssertTrue(status.hasChanges)
+        XCTAssertTrue(status.hasMergeConflicts)
+        XCTAssertEqual(status.conflictedFileCount, 1)
+    }
+
+    func testDashboardStatusesReturnsDirtyStateAndIsolatesRepositoryErrors() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitExplorerDashboardFixture-\(UUID().uuidString)")
+        let repositoryURL = root.appendingPathComponent("valid")
+        let missingURL = root.appendingPathComponent("missing")
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+        try git(["init", "-b", "main"], at: repositoryURL)
+        try write("uncommitted\n", to: repositoryURL.appendingPathComponent("new.txt"))
+
+        let valid = Repository(
+            id: "valid",
+            name: "valid",
+            fullName: "Local/valid",
+            owner: "Local",
+            isPrivate: false,
+            localURL: repositoryURL
+        )
+        let missing = Repository(
+            id: "missing",
+            name: "missing",
+            fullName: "Local/missing",
+            owner: "Local",
+            isPrivate: false,
+            localURL: missingURL
+        )
+
+        let report = await GitService().dashboardStatuses(for: [valid, missing])
+
+        XCTAssertEqual(report.statuses[valid.id]?.branch, "main")
+        XCTAssertEqual(report.statuses[valid.id]?.hasChanges, true)
+        XCTAssertNil(report.statuses[missing.id])
+        XCTAssertNotNil(report.errors[missing.id])
+    }
+
     func testReadsMergeHistoryDecorationsChildrenAndDiff() async throws {
         let repository = FileManager.default.temporaryDirectory
             .appendingPathComponent("GitExplorerFixture-\(UUID().uuidString)")

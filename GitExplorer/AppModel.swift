@@ -28,6 +28,7 @@ final class AppModel: ObservableObject {
             defaults.set(selectedRepositoryID, forKey: Self.selectedRepositoryDefaultsKey)
         }
     }
+    @Published var isDashboardPresented = false
     @Published var searchText = ""
     @Published private(set) var accounts: [SourceControlAccount] = []
     @Published private(set) var accountConnectionStatuses: [UUID: AccountConnectionStatus] = [:]
@@ -69,6 +70,15 @@ final class AppModel: ObservableObject {
 
     var selectedRepository: Repository? {
         repositories.first { $0.id == selectedRepositoryID }
+    }
+
+    func showDashboard() {
+        isDashboardPresented = true
+    }
+
+    func openRepository(_ repository: Repository) {
+        selectedRepositoryID = repository.id
+        isDashboardPresented = false
     }
 
     var visibleRepositories: [Repository] {

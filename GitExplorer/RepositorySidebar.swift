@@ -263,17 +263,17 @@ struct RepositorySidebar: View {
 
     private func repositoryButton(for repository: Repository, indented: Bool) -> some View {
         Button {
-            model.selectedRepositoryID = repository.id
+            model.openRepository(repository)
         } label: {
             RepositoryRow(repository: repository, indented: indented)
         }
         .buttonStyle(ResponsiveButtonStyle(
-            isSelected: model.selectedRepositoryID == repository.id,
+            isSelected: !model.isDashboardPresented && model.selectedRepositoryID == repository.id,
             shape: .rounded(6),
             selectedBackground: Color.accentColor.opacity(0.18)
         ))
         .accessibilityAddTraits(
-            model.selectedRepositoryID == repository.id ? .isSelected : []
+            !model.isDashboardPresented && model.selectedRepositoryID == repository.id ? .isSelected : []
         )
     }
 }
@@ -314,17 +314,17 @@ private struct OwnerGroup: View {
             if isExpanded {
                 ForEach(repositories) { repository in
                     Button {
-                        model.selectedRepositoryID = repository.id
+                        model.openRepository(repository)
                     } label: {
                         RepositoryRow(repository: repository, indented: true)
                     }
                     .buttonStyle(ResponsiveButtonStyle(
-                        isSelected: model.selectedRepositoryID == repository.id,
+                        isSelected: !model.isDashboardPresented && model.selectedRepositoryID == repository.id,
                         shape: .rounded(6),
                         selectedBackground: Color.accentColor.opacity(0.18)
                     ))
                     .accessibilityAddTraits(
-                        model.selectedRepositoryID == repository.id ? .isSelected : []
+                        !model.isDashboardPresented && model.selectedRepositoryID == repository.id ? .isSelected : []
                     )
                 }
             }

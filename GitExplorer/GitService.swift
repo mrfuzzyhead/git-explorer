@@ -123,11 +123,39 @@ actor GitService {
     }
 
     func status(at repository: URL) throws -> RepositoryStatus {
-        let branch = try run(["-C", repository.path, "branch", "--show-current"])
         let porcelain = try run(["-C", repository.path, "status", "--porcelain=v2", "--branch"])
-        var result = RepositoryStatus(branch: branch.isEmpty ? "Detached HEAD" : branch)
+        return Self.parseStatus(porcelain)
+    }
+
+    func dashboardStatuses(for repositories: [Repository]) async -> DashboardStatusReport {
+        let localRepositories = repositories.compactMap { repository -> (Repository.ID, URL)? in
+            repository.localURL.map { (repository.id, $0) }
+        }
+        let executableURL = executableURL
+        return await Task.detached(priority: .utility) {
+            var report = DashboardStatusReport()
+            for (id, url) in localRepositories {
+                do {
+                    let porcelain = try Self.run(
+                        ["-C", url.path, "status", "--porcelain=v2", "--branch"],
+                        executableURL: executableURL
+                    )
+                    report.statuses[id] = Self.parseStatus(porcelain)
+                } catch {
+                    report.errors[id] = error.localizedDescription
+                }
+            }
+            return report
+        }.value
+    }
+
+    nonisolated static func parseStatus(_ porcelain: String) -> RepositoryStatus {
+        var result = RepositoryStatus()
         for line in porcelain.split(separator: "\n") {
-            if line.hasPrefix("# branch.upstream ") {
+            if line.hasPrefix("# branch.head ") {
+                let branch = String(line.dropFirst("# branch.head ".count))
+                result.branch = branch == "(detached)" ? "Detached HEAD" : branch
+            } else if line.hasPrefix("# branch.upstream ") {
                 result.upstream = String(line.dropFirst("# branch.upstream ".count))
             } else if line.hasPrefix("# branch.ab ") {
                 for part in line.split(separator: " ") {
@@ -136,9 +164,9 @@ actor GitService {
                 }
             } else if !line.hasPrefix("#") {
                 result.hasChanges = true
+                if line.hasPrefix("u ") { result.conflictedFileCount += 1 }
             }
         }
-        result.conflictedFileCount = try conflictedPaths(at: repository).count
         return result
     }
 
