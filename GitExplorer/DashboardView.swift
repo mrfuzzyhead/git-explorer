@@ -1,10 +1,19 @@
 import AppKit
 import SwiftUI
 
+private enum DashboardSectionSelection: String, CaseIterable, Identifiable {
+    case recent = "Recent"
+    case uncommitted = "Uncommitted"
+    case attention = "Attention"
+
+    var id: Self { self }
+}
+
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var report: DashboardStatusReport?
     @State private var reloadID = UUID()
+    @State private var sectionSelection = DashboardSectionSelection.recent
 
     private let columns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
 
@@ -17,9 +26,8 @@ struct DashboardView: View {
                     emptyDashboard
                 } else {
                     summaryCards
-                    recentRepositories
-                    workingTreeSection
-                    attentionSection
+                    sectionPicker
+                    selectedSection
                 }
             }
             .padding(24)
@@ -28,7 +36,7 @@ struct DashboardView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .task(id: reloadID) { await loadStatuses() }
-        .navigationTitle("Dashboard")
+        .navigationTitle("Git Explorer")
     }
 
     private var dashboardHeader: some View {
@@ -46,8 +54,49 @@ struct DashboardView: View {
                 Label("Refresh Status", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .disabled(report == nil || localRepositories.isEmpty)
             .help("Refresh local working tree status")
+        }
+    }
+
+    private var sectionPicker: some View {
+        HStack(spacing: 2) {
+            ForEach(DashboardSectionSelection.allCases) { section in
+                Button {
+                    sectionSelection = section
+                } label: {
+                    Text(section.rawValue)
+                        .font(.callout.weight(.medium))
+                        .padding(.horizontal, 13)
+                        .frame(minHeight: 28)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(ResponsiveButtonStyle(
+                    isSelected: sectionSelection == section,
+                    shape: .capsule,
+                    selectedBackground: .white
+                ))
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(sectionSelection == section ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(.quaternary, in: Capsule())
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Dashboard view")
+    }
+
+    @ViewBuilder
+    private var selectedSection: some View {
+        switch sectionSelection {
+        case .recent:
+            recentRepositories
+        case .uncommitted:
+            workingTreeSection
+        case .attention:
+            attentionSection
         }
     }
 
@@ -137,14 +186,19 @@ struct DashboardView: View {
         }
     }
 
-    @ViewBuilder
     private var attentionSection: some View {
         let repositories = attentionRepositories
-        if !repositories.isEmpty {
-            DashboardSection(
-                title: "Attention",
-                subtitle: "Branches with conflicts or commits waiting to move"
-            ) {
+        return DashboardSection(
+            title: "Attention",
+            subtitle: "Branches with conflicts or commits waiting to move"
+        ) {
+            if localRepositories.isEmpty {
+                sectionEmpty("No local repositories are configured.", icon: "externaldrive.badge.questionmark")
+            } else if report == nil {
+                loadingRow("Checking local working trees…")
+            } else if repositories.isEmpty {
+                sectionEmpty("No repositories need attention.", icon: "checkmark.circle.fill", tint: .green)
+            } else {
                 VStack(spacing: 0) {
                     ForEach(repositories) { repository in
                         RepositoryDashboardRow(

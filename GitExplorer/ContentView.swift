@@ -92,6 +92,17 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             RepositorySidebar()
+                .toolbar(removing: .sidebarToggle)
+                .toolbar {
+                    ToolbarSpacer(placement: .primaryAction)
+                    if columnVisibility != .detailOnly {
+                        ToolbarItem(placement: .primaryAction) {
+                            HStack(spacing: 0) {
+                                sidebarToolbarButtons
+                            }
+                        }
+                    }
+                }
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.width
                 } action: { width in
@@ -104,32 +115,17 @@ struct ContentView: View {
                     max: 480
                 )
         } detail: {
-            if model.isDashboardPresented {
-                DashboardView()
-            } else if let repository = model.selectedRepository {
-                RepositoryDetailView(repository: repository)
-                    .id(repository.id)
-            } else {
-                ContentUnavailableView(
-                    "Select a Repository",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Choose a repository from the sidebar to explore it.")
-                )
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    model.showDashboard()
-                } label: {
-                    Label("Dashboard", systemImage: "rectangle.3.group")
+            detailContent
+                .toolbar(removing: .sidebarToggle)
+                .toolbar {
+                    if columnVisibility == .detailOnly {
+                        ToolbarItem(placement: .navigation) {
+                            HStack(spacing: 0) {
+                                sidebarToolbarButtons
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .tint(model.isDashboardPresented ? .accentColor : nil)
-                .accessibilityAddTraits(model.isDashboardPresented ? .isSelected : [])
-                .help("Open Dashboard")
-            }
         }
         .overlay(alignment: .topTrailing) {
             ToastStackView(toasts: model.toasts, dismiss: model.dismissToast)
@@ -139,6 +135,45 @@ struct ContentView: View {
             if case let .missing(message) = model.gitAvailability {
                 GitMissingBanner(message: message)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        if model.isDashboardPresented {
+            DashboardView()
+        } else if let repository = model.selectedRepository {
+            RepositoryDetailView(repository: repository)
+                .id(repository.id)
+        } else {
+            ContentUnavailableView(
+                "Select a Repository",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                description: Text("Choose a repository from the sidebar to explore it.")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarToolbarButtons: some View {
+        Button {
+            model.showDashboard()
+        } label: {
+            Label("Dashboard", systemImage: "rectangle.3.group")
+        }
+        .help("Open Dashboard")
+        .accessibilityLabel("Dashboard")
+        .accessibilityValue(model.isDashboardPresented ? "Selected" : "Not selected")
+
+        Button(action: toggleSidebar) {
+            Label("Toggle Sidebar", systemImage: "sidebar.left")
+        }
+        .help(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+    }
+
+    private func toggleSidebar() {
+        withAnimation {
+            columnVisibility = columnVisibility == .detailOnly ? .doubleColumn : .detailOnly
         }
     }
 }
