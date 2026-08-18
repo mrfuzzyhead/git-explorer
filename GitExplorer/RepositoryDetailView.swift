@@ -332,6 +332,7 @@ private struct RepositoryHeader: View {
 }
 
 private struct RepositoryViewBar<Tab: Hashable & Identifiable & RawRepresentable, Actions: View>: View where Tab.RawValue == String {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var selection: Tab
     let tabs: [Tab]
     @ViewBuilder let actions: Actions
@@ -352,7 +353,7 @@ private struct RepositoryViewBar<Tab: Hashable & Identifiable & RawRepresentable
                     .buttonStyle(ResponsiveButtonStyle(
                         isSelected: selection == tab,
                         shape: .capsule,
-                        selectedBackground: .white
+                        selectedBackground: colorScheme == .dark ? .black : .white
                     ))
                     .foregroundStyle(.primary)
                     .accessibilityAddTraits(selection == tab ? .isSelected : [])
