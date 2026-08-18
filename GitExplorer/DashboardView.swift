@@ -10,7 +10,6 @@ private enum DashboardSectionSelection: String, CaseIterable, Identifiable {
 }
 
 struct DashboardView: View {
-    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var model: AppModel
     @State private var report: DashboardStatusReport?
     @State private var reloadID = UUID()
@@ -76,7 +75,7 @@ struct DashboardView: View {
                 .buttonStyle(ResponsiveButtonStyle(
                     isSelected: sectionSelection == section,
                     shape: .capsule,
-                    selectedBackground: colorScheme == .dark ? .black : .white
+                    selectedBackground: Color(nsColor: .windowBackgroundColor)
                 ))
                 .foregroundStyle(.primary)
                 .accessibilityAddTraits(sectionSelection == section ? .isSelected : [])
