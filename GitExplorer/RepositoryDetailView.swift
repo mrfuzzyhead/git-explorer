@@ -105,9 +105,11 @@ private struct LocalRepositoryView: View {
                 ForEach([RepositoryOperation.fetch, .pull, .push, .sync], id: \.rawValue) { item in
                     Button { perform(item) } label: {
                         Label(item.rawValue, systemImage: item.icon)
+                            .frame(height: 20, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
+                    .controlSize(.regular)
                     .disabled(operation != nil)
                     .help(help(for: item))
                 }
@@ -350,9 +352,9 @@ private struct RepositoryViewBar<Tab: Hashable & Identifiable & RawRepresentable
                     .buttonStyle(ResponsiveButtonStyle(
                         isSelected: selection == tab,
                         shape: .capsule,
-                        selectedBackground: .accentColor
+                        selectedBackground: .white
                     ))
-                    .foregroundStyle(selection == tab ? .white : .primary)
+                    .foregroundStyle(.primary)
                     .accessibilityAddTraits(selection == tab ? .isSelected : [])
                 }
             }
