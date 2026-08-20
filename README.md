@@ -85,7 +85,8 @@ stored separately in macOS Keychain.
 For Azure DevOps, enter the organization name from
 `https://dev.azure.com/<organization>` and a PAT with **Code: Read** access.
 Git Explorer validates the account and loads repositories across projects in
-that organization. Azure Pipelines runs are not displayed yet.
+that organization. Git Explorer displays Azure Pipelines runs and fetches their
+job/task timeline into an in-app details sheet.
 
 ### GitHub personal access token
 

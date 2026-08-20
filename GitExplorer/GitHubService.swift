@@ -91,6 +91,28 @@ actor GitHubService {
             struct Author: Decodable { let name: String }
         }
     }
+    private struct APIJobsResponse: Decodable {
+        let jobs: [APIJob]
+    }
+    private struct APIJob: Decodable {
+        let id: Int64
+        let name: String
+        let status: String
+        let conclusion: String?
+        let started_at: Date?
+        let completed_at: Date?
+        let steps: [APIStep]?
+
+        struct APIStep: Decodable {
+            let number: Int
+            let name: String
+            let status: String
+            let conclusion: String?
+            let started_at: Date?
+            let completed_at: Date?
+        }
+    }
+    private struct APIBranch: Decodable { let name: String }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -200,6 +222,57 @@ actor GitHubService {
             runs: runs,
             hasMore: offset + runs.count < response.total_count
         )
+    }
+
+    func workflowRunDetails(fullName: String, runID: Int64, token: String) async throws -> WorkflowRunDetails {
+        let data = try await request(
+            path: "/repos/\(fullName)/actions/runs/\(runID)/jobs",
+            query: [URLQueryItem(name: "per_page", value: "100")],
+            token: token
+        )
+        return try workflowRunDetails(from: data)
+    }
+
+    func workflowRunDetails(from data: Data) throws -> WorkflowRunDetails {
+        let response = try decoder.decode(APIJobsResponse.self, from: data)
+        return WorkflowRunDetails(jobs: response.jobs.map { job in
+            WorkflowRunJob(
+                id: String(job.id),
+                name: job.name,
+                status: job.status,
+                conclusion: job.conclusion,
+                startedAt: job.started_at,
+                completedAt: job.completed_at,
+                steps: (job.steps ?? []).map { step in
+                    WorkflowRunStep(
+                        id: "\(job.id)-\(step.number)",
+                        name: step.name,
+                        status: step.status,
+                        conclusion: step.conclusion,
+                        startedAt: step.started_at,
+                        completedAt: step.completed_at
+                    )
+                }
+            )
+        })
+    }
+
+    func branches(fullName: String, token: String) async throws -> [String] {
+        var result: [String] = []
+        for page in 1...10 {
+            let data = try await request(
+                path: "/repos/\(fullName)/branches",
+                query: [
+                    URLQueryItem(name: "per_page", value: "100"),
+                    URLQueryItem(name: "page", value: String(page))
+                ],
+                token: token
+            )
+            let batch = try decoder.decode([APIBranch].self, from: data).map(\.name)
+            result.append(contentsOf: batch)
+            if batch.count < 100 { break }
+        }
+        return result.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     func commitPage(

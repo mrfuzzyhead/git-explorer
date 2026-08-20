@@ -25,48 +25,26 @@ private struct FileExplorerWorkspace: View {
     @State private var entriesByDirectory: [URL: [URL]] = [:]
     @State private var loadingDirectories: Set<URL> = []
     @State private var directoryErrors: [URL: String] = [:]
-    @State private var treePaneWidth: CGFloat
-    @GestureState private var treePaneDragOffset: CGFloat = 0
-
-    private static let treePaneWidthDefaultsKey = "fileExplorer.treePaneWidth"
-    private static let defaultTreePaneWidth: CGFloat = 280
-    private let minimumTreePaneWidth: CGFloat = 220
-    private let maximumTreePaneWidth: CGFloat = 420
-    private let minimumPreviewWidth: CGFloat = 400
-    private let resizeHandleWidth: CGFloat = 8
 
     init(root: URL) {
         self.root = root
         _selection = State(initialValue: root)
         _expandedDirectories = State(initialValue: Set([root]))
-        _treePaneWidth = State(initialValue: Self.savedTreePaneWidth)
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let resolvedTreePaneWidth = clampedTreePaneWidth(
-                treePaneWidth + treePaneDragOffset,
-                containerWidth: geometry.size.width
+        ExplorerSplitView {
+            ExplorerTreePane(
+                root: root,
+                selection: $selection,
+                expandedDirectories: $expandedDirectories,
+                entriesByDirectory: entriesByDirectory,
+                loadingDirectories: loadingDirectories,
+                directoryErrors: directoryErrors,
+                onLoadDirectory: requestLoad
             )
-
-            HStack(spacing: 0) {
-                ExplorerTreePane(
-                    root: root,
-                    selection: $selection,
-                    expandedDirectories: $expandedDirectories,
-                    entriesByDirectory: entriesByDirectory,
-                    loadingDirectories: loadingDirectories,
-                    directoryErrors: directoryErrors,
-                    onLoadDirectory: requestLoad
-                )
-                .frame(width: resolvedTreePaneWidth)
-
-                resizeHandle(containerWidth: geometry.size.width)
-
-                preview
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .layoutPriority(1)
-            }
+        } preview: {
+            preview
         }
         .task {
             await loadDirectoryIfNeeded(root)
@@ -104,6 +82,69 @@ private struct FileExplorerWorkspace: View {
         directories.forEach(requestLoad)
     }
 
+    @MainActor
+    private func requestLoad(_ directory: URL) {
+        Task { await loadDirectoryIfNeeded(directory) }
+    }
+
+    @MainActor
+    private func loadDirectoryIfNeeded(_ directory: URL) async {
+        let directory = directory.standardizedFileURL
+        guard ExplorerPath.contains(directory, in: root),
+              entriesByDirectory[directory] == nil,
+              !loadingDirectories.contains(directory) else { return }
+
+        loadingDirectories.insert(directory)
+        directoryErrors[directory] = nil
+        do {
+            entriesByDirectory[directory] = try await model.git.listFiles(at: directory)
+        } catch {
+            directoryErrors[directory] = error.localizedDescription
+            model.showError(error.localizedDescription, title: "Couldn’t load files")
+        }
+        loadingDirectories.remove(directory)
+    }
+}
+
+private struct ExplorerSplitView<Tree: View, Preview: View>: View {
+    @EnvironmentObject private var model: AppModel
+    @GestureState private var treePaneDragOffset: CGFloat = 0
+
+    let tree: Tree
+    let preview: Preview
+
+    private let minimumTreePaneWidth: CGFloat = 220
+    private let maximumTreePaneWidth: CGFloat = 420
+    private let minimumPreviewWidth: CGFloat = 400
+    private let resizeHandleWidth: CGFloat = 8
+
+    init(
+        @ViewBuilder tree: () -> Tree,
+        @ViewBuilder preview: () -> Preview
+    ) {
+        self.tree = tree()
+        self.preview = preview()
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let resolvedTreePaneWidth = clampedTreePaneWidth(
+                model.fileExplorerTreePaneWidth + treePaneDragOffset,
+                containerWidth: geometry.size.width
+            )
+
+            HStack(spacing: 0) {
+                tree
+                    .frame(width: resolvedTreePaneWidth)
+                    .frame(maxHeight: .infinity)
+                resizeHandle(containerWidth: geometry.size.width)
+                preview
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
+            }
+        }
+    }
+
     private func clampedTreePaneWidth(_ proposedWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
         let availableMaximum = max(
             minimumTreePaneWidth,
@@ -130,51 +171,68 @@ private struct FileExplorerWorkspace: View {
                     }
                     .onEnded { value in
                         let proposedWidth = clampedTreePaneWidth(
-                            treePaneWidth + value.translation.width,
+                            model.fileExplorerTreePaneWidth + value.translation.width,
                             containerWidth: containerWidth
                         )
                         var transaction = Transaction()
                         transaction.animation = nil
                         withTransaction(transaction) {
-                            treePaneWidth = proposedWidth
+                            model.fileExplorerTreePaneWidth = proposedWidth
                         }
-                        UserDefaults.standard.set(
-                            Double(treePaneWidth),
-                            forKey: Self.treePaneWidthDefaultsKey
-                        )
                     }
             )
             .help("Drag to resize the folder pane")
     }
+}
 
-    private static var savedTreePaneWidth: CGFloat {
-        guard UserDefaults.standard.object(forKey: treePaneWidthDefaultsKey) != nil else {
-            return defaultTreePaneWidth
-        }
-        return CGFloat(UserDefaults.standard.double(forKey: treePaneWidthDefaultsKey))
-    }
+private struct ExplorerBranchBar: View {
+    let branch: String
+    let branches: [String]
+    let isBusy: Bool
+    let onSelect: (String) -> Void
 
-    @MainActor
-    private func requestLoad(_ directory: URL) {
-        Task { await loadDirectoryIfNeeded(directory) }
-    }
-
-    @MainActor
-    private func loadDirectoryIfNeeded(_ directory: URL) async {
-        let directory = directory.standardizedFileURL
-        guard ExplorerPath.contains(directory, in: root),
-              entriesByDirectory[directory] == nil,
-              !loadingDirectories.contains(directory) else { return }
-
-        loadingDirectories.insert(directory)
-        directoryErrors[directory] = nil
-        do {
-            entriesByDirectory[directory] = try await model.git.listFiles(at: directory)
-        } catch {
-            directoryErrors[directory] = error.localizedDescription
-            model.showError(error.localizedDescription, title: "Couldn’t load files")
-        }
-        loadingDirectories.remove(directory)
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: 32)
+            .overlay {
+                GeometryReader { geometry in
+                    Menu {
+                        ForEach(branches, id: \.self) { candidate in
+                            Button {
+                                onSelect(candidate)
+                            } label: {
+                                if candidate == branch {
+                                    Label(candidate, systemImage: "checkmark")
+                                } else {
+                                    Text(candidate)
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(branch.isEmpty ? "Loading branches…" : branch)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+                        .background(Color.secondary.opacity(0.16), in: Capsule())
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .disabled(branches.isEmpty || isBusy)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(.bar)
+            .accessibilityLabel("File explorer branch")
     }
 }
 
@@ -611,39 +669,67 @@ private struct RemoteFileExplorerWorkspace: View {
     @State private var entriesByPath: [String: [RemoteFileEntry]] = [:]
     @State private var loadingPaths: Set<String> = []
     @State private var errors: [String: String] = [:]
+    @State private var branches: [String] = []
+    @State private var selectedBranch: String
+    @State private var loadingBranches = false
+
+    init(repository: Repository) {
+        self.repository = repository
+        _selectedBranch = State(initialValue: repository.defaultBranch ?? "")
+    }
 
     private var root: RemoteFileEntry {
         RemoteFileEntry(name: repository.name, path: "", kind: .directory, size: 0, webURL: repository.webURL)
     }
 
     var body: some View {
-        HSplitView {
-            List {
-                RemoteFileTreeNode(
-                    entry: root,
-                    selection: $selection,
-                    expanded: $expanded,
-                    entriesByPath: entriesByPath,
-                    loadingPaths: loadingPaths,
-                    errors: errors,
-                    onLoad: requestLoad,
-                    isRoot: true
+        ExplorerSplitView {
+            VStack(spacing: 0) {
+                ExplorerBranchBar(
+                    branch: selectedBranch,
+                    branches: branches,
+                    isBusy: loadingBranches,
+                    onSelect: selectBranch
                 )
+                Divider()
+                List {
+                    RemoteFileTreeNode(
+                        entry: root,
+                        selection: $selection,
+                        expanded: $expanded,
+                        entriesByPath: entriesByPath,
+                        loadingPaths: loadingPaths,
+                        errors: errors,
+                        onLoad: requestLoad,
+                        isRoot: true
+                    )
+                }
+                .listStyle(.sidebar)
             }
-            .listStyle(.sidebar)
-            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
-
+        } preview: {
             remotePreview
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task { await load(path: "") }
+        .task {
+            loadingBranches = true
+            do {
+                branches = try await model.remoteBranches(for: repository)
+                if selectedBranch.isEmpty { selectedBranch = branches.first ?? "" }
+            } catch {
+                model.showError(error.localizedDescription, title: "Couldn’t load branches")
+            }
+            if !selectedBranch.isEmpty, !branches.contains(selectedBranch) {
+                branches.insert(selectedBranch, at: 0)
+            }
+            loadingBranches = false
+            await load(path: "")
+        }
     }
 
     @ViewBuilder
     private var remotePreview: some View {
         if let selection, selection.kind == .file {
-            RemoteFilePreview(repository: repository, entry: selection)
-                .id(selection.path)
+            RemoteFilePreview(repository: repository, entry: selection, reference: selectedBranch)
+                .id("\(selectedBranch):\(selection.path)")
         } else {
             let directory = selection?.path ?? ""
             RemoteFolderPreview(
@@ -665,6 +751,17 @@ private struct RemoteFileExplorerWorkspace: View {
         Task { await load(path: path) }
     }
 
+    private func selectBranch(_ branch: String) {
+        guard branch != selectedBranch else { return }
+        selectedBranch = branch
+        selection = nil
+        expanded = [""]
+        entriesByPath = [:]
+        loadingPaths = []
+        errors = [:]
+        requestLoad("")
+    }
+
     @MainActor
     private func load(path: String) async {
         guard entriesByPath[path] == nil, !loadingPaths.contains(path), !model.token(for: repository).isEmpty else { return }
@@ -674,7 +771,7 @@ private struct RemoteFileExplorerWorkspace: View {
             entriesByPath[path] = try await model.remoteFiles(
                 for: repository,
                 path: path,
-                reference: repository.defaultBranch
+                reference: selectedBranch
             )
         } catch {
             errors[path] = error.localizedDescription
@@ -813,6 +910,7 @@ private struct RemoteFilePreview: View {
     @EnvironmentObject private var model: AppModel
     let repository: Repository
     let entry: RemoteFileEntry
+    let reference: String
     @State private var contents: String?
     @State private var imageData: Data?
     @State private var errorMessage: String?
@@ -867,7 +965,7 @@ private struct RemoteFilePreview: View {
                     let data = try await model.remoteFileData(
                         for: repository,
                         path: entry.path,
-                        reference: repository.defaultBranch
+                        reference: reference
                     )
                     guard NSImage(data: data) != nil else {
                         errorMessage = "This image format can’t be displayed."
@@ -878,7 +976,7 @@ private struct RemoteFilePreview: View {
                     contents = try await model.remoteFileContents(
                         for: repository,
                         path: entry.path,
-                        reference: repository.defaultBranch
+                        reference: reference
                     )
                 }
             } catch {

@@ -94,6 +94,18 @@ actor AzureDevOpsService {
         let url: URL?
         let content: String?
     }
+    private struct APITimeline: Decodable { let records: [APITimelineRecord]? }
+    private struct APITimelineRecord: Decodable {
+        let id: String
+        let parentId: String?
+        let type: String
+        let name: String
+        let state: String?
+        let result: String?
+        let startTime: Date?
+        let finishTime: Date?
+        let order: Int?
+    }
 
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -212,6 +224,69 @@ actor AzureDevOpsService {
             limit: limit,
             commitTitles: commitTitles
         )
+    }
+
+    func pipelineRunDetails(
+        repository: Repository,
+        runID: Int64,
+        organization: String,
+        token: String
+    ) async throws -> WorkflowRunDetails {
+        let data = try await request(
+            organization: organization,
+            project: repository.remoteProject,
+            path: "/_apis/build/builds/\(runID)/timeline",
+            query: [URLQueryItem(name: "api-version", value: "7.1")],
+            token: token
+        )
+        return try pipelineRunDetails(from: data)
+    }
+
+    func pipelineRunDetails(from data: Data) throws -> WorkflowRunDetails {
+        let records = try decoder.decode(APITimeline.self, from: data).records ?? []
+        let jobs = records
+            .filter { $0.type.caseInsensitiveCompare("Job") == .orderedSame }
+            .sorted { ($0.order ?? .max) < ($1.order ?? .max) }
+        return WorkflowRunDetails(jobs: jobs.map { job in
+            let steps = records
+                .filter { $0.parentId == job.id && $0.type.caseInsensitiveCompare("Task") == .orderedSame }
+                .sorted { ($0.order ?? .max) < ($1.order ?? .max) }
+                .map { step in
+                    WorkflowRunStep(
+                        id: step.id,
+                        name: step.name,
+                        status: step.state ?? "unknown",
+                        conclusion: step.result,
+                        startedAt: step.startTime,
+                        completedAt: step.finishTime
+                    )
+                }
+            return WorkflowRunJob(
+                id: job.id,
+                name: job.name,
+                status: job.state ?? "unknown",
+                conclusion: job.result,
+                startedAt: job.startTime,
+                completedAt: job.finishTime,
+                steps: steps
+            )
+        })
+    }
+
+    func branches(repository: Repository, organization: String, token: String) async throws -> [String] {
+        let data = try await request(
+            organization: organization,
+            project: repository.remoteProject,
+            path: "/_apis/git/repositories/\(try repositoryID(repository))/refs",
+            query: [
+                URLQueryItem(name: "filter", value: "heads/"),
+                URLQueryItem(name: "api-version", value: "7.1")
+            ],
+            token: token
+        )
+        return try decoder.decode(ListResponse<APIRef>.self, from: data).value
+            .map { $0.name.replacingOccurrences(of: "refs/heads/", with: "") }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     func pipelineRunPage(

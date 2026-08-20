@@ -104,7 +104,7 @@ private struct LocalRepositoryView: View {
             RepositoryViewBar(selection: $selection, tabs: RepositoryTab.allCases) {
                 ForEach([RepositoryOperation.fetch, .pull, .push, .sync], id: \.rawValue) { item in
                     Button { perform(item) } label: {
-                        Label(item.rawValue, systemImage: item.icon)
+                        RepositoryActionLabel(item.rawValue, systemImage: item.icon)
                             .frame(height: 20, alignment: .center)
                     }
                     .buttonStyle(.bordered)
@@ -193,6 +193,24 @@ private struct LocalRepositoryView: View {
         case .pull: "Fast-forward the current branch from its upstream"
         case .push: "Push the current branch to its upstream"
         case .sync: "Pull, then push the current branch"
+        }
+    }
+}
+
+private struct RepositoryActionLabel: View {
+    let title: String
+    let systemImage: String
+
+    init(_ title: String, systemImage: String) {
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .foregroundStyle(Color(nsColor: .lightGray))
+            Text(title)
         }
     }
 }
@@ -414,6 +432,7 @@ private struct RepositoryActionsView: View {
     @State private var hasMore = false
     @State private var loadError: String?
     @State private var columnWidths = ActionsColumnWidths.saved
+    @State private var selectedRun: GitHubWorkflowRun?
 
     private let pageSize = 30
 
@@ -455,6 +474,10 @@ private struct RepositoryActionsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: repository.id) { await reload() }
         .task(id: repository.id) { await monitorRunningRuns() }
+        .sheet(item: $selectedRun) { run in
+            WorkflowRunDetailsView(repository: repository, run: run)
+                .environmentObject(model)
+        }
     }
 
     private var actionsList: some View {
@@ -469,7 +492,11 @@ private struct RepositoryActionsView: View {
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(runs) { run in
-                            ActionsRunRow(run: run, columnWidths: displayedColumnWidths)
+                            ActionsRunRow(
+                                run: run,
+                                columnWidths: displayedColumnWidths,
+                                onSelect: { selectedRun = run }
+                            )
                                 .onAppear {
                                     guard run.id == runs.last?.id else { return }
                                     Task { await loadMoreRuns() }
@@ -716,6 +743,7 @@ private struct ActionsHeaderRow: View {
 private struct ActionsRunRow: View {
     let run: GitHubWorkflowRun
     let columnWidths: ActionsColumnWidths
+    let onSelect: () -> Void
     @State private var isHovered = false
 
     var body: some View {
@@ -724,13 +752,10 @@ private struct ActionsRunRow: View {
                 .padding(.leading, 18)
                 .padding(.trailing, 10)
                 .frame(width: columnWidths.status, alignment: .leading)
-            Link(destination: run.webURL) {
-                Text(run.commitTitle)
-                    .bold()
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .buttonStyle(.plain)
+            Text(run.commitTitle)
+                .bold()
+                .lineLimit(1)
+                .truncationMode(.tail)
             .padding(.horizontal, 10)
             .frame(width: columnWidths.commit, alignment: .leading)
             elapsedTime
@@ -760,6 +785,7 @@ private struct ActionsRunRow: View {
         .frame(height: 44)
         .background(isHovered ? Color.accentColor.opacity(0.09) : Color.clear)
         .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .onHover { isHovered = $0 }
         .help(run.commitTitle)
@@ -797,6 +823,163 @@ private struct ActionsRunRow: View {
         formatter.unitsStyle = .abbreviated
         formatter.maximumUnitCount = 2
         formatter.zeroFormattingBehavior = .dropAll
+        return formatter
+    }()
+}
+
+private struct WorkflowRunDetailsView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let repository: Repository
+    let run: GitHubWorkflowRun
+
+    @State private var details: WorkflowRunDetails?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(run.workflowTitle).font(.title2.bold())
+                    Text(run.commitTitle).foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Label(run.branch, systemImage: "arrow.triangle.branch")
+                            .foregroundStyle(.secondary)
+                        ActionsStatusLabel(status: run.displayStatus)
+                        Link(destination: run.webURL) {
+                            Label(
+                                "Open in \(repository.provider?.displayName ?? "GitHub")",
+                                systemImage: "arrow.up.right.square"
+                            )
+                        }
+                    }
+                    .font(.caption)
+                }
+                Spacer(minLength: 12)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close")
+                .accessibilityLabel("Close")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            Divider()
+
+            Group {
+                if let details {
+                    if details.jobs.isEmpty {
+                        ContentUnavailableView(
+                            "No Job Details",
+                            systemImage: "list.bullet.rectangle",
+                            description: Text("The provider returned no jobs for this run.")
+                        )
+                    } else {
+                        List(details.jobs) { job in
+                            DisclosureGroup {
+                                ForEach(job.steps) { step in
+                                    WorkflowRunDetailRow(
+                                        name: step.name,
+                                        status: step.status,
+                                        conclusion: step.conclusion,
+                                        startedAt: step.startedAt,
+                                        completedAt: step.completedAt,
+                                        isStep: true
+                                    )
+                                }
+                            } label: {
+                                WorkflowRunDetailRow(
+                                    name: job.name,
+                                    status: job.status,
+                                    conclusion: job.conclusion,
+                                    startedAt: job.startedAt,
+                                    completedAt: job.completedAt,
+                                    isStep: false
+                                )
+                            }
+                        }
+                        .listStyle(.inset)
+                    }
+                } else if let errorMessage {
+                    ContentUnavailableView(
+                        "Couldn’t Load Run Details",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(errorMessage)
+                    )
+                } else {
+                    PaneLoadingView("Fetching run details…")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 680, idealWidth: 780, minHeight: 460, idealHeight: 560)
+        .task {
+            do {
+                details = try await model.remoteWorkflowRunDetails(for: repository, runID: run.id)
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+private struct WorkflowRunDetailRow: View {
+    let name: String
+    let status: String
+    let conclusion: String?
+    let startedAt: Date?
+    let completedAt: Date?
+    let isStep: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 18)
+            Text(name)
+                .fontWeight(isStep ? .regular : .semibold)
+                .lineLimit(1)
+            Spacer()
+            if let duration {
+                Text(duration).monospacedDigit().foregroundStyle(.secondary)
+            }
+            Text(displayStatus)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(color)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var normalizedResult: String { (conclusion ?? status).lowercased() }
+    private var displayStatus: String {
+        (conclusion ?? status).replacingOccurrences(of: "_", with: " ").capitalized
+    }
+    private var icon: String {
+        if ["success", "succeeded", "partiallysucceeded"].contains(normalizedResult) { return "checkmark.circle.fill" }
+        if ["failure", "failed", "canceled", "cancelled"].contains(normalizedResult) { return "xmark.circle.fill" }
+        return "clock.fill"
+    }
+    private var color: Color {
+        if ["success", "succeeded", "partiallysucceeded"].contains(normalizedResult) { return .green }
+        if ["failure", "failed", "canceled", "cancelled"].contains(normalizedResult) { return .red }
+        return .orange
+    }
+    private var duration: String? {
+        guard let startedAt else { return nil }
+        let end = completedAt ?? .now
+        return Self.durationFormatter.string(from: max(0, end.timeIntervalSince(startedAt)))
+    }
+    private static let durationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 2
         return formatter
     }()
 }

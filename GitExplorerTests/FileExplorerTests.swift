@@ -49,6 +49,20 @@ final class FileExplorerTests: XCTestCase {
 
 @MainActor
 final class AppModelTests: XCTestCase {
+    func testFileExplorerPaneWidthRestoresAndPersistsThroughAppModel() {
+        let defaults = UserDefaults(suiteName: #function)!
+        defaults.removePersistentDomain(forName: #function)
+        defaults.set(true, forKey: "sourceControlAccounts.didMigrateLegacyGitHub.v1")
+        defaults.set(336.0, forKey: "fileExplorer.treePaneWidth")
+        defer { defaults.removePersistentDomain(forName: #function) }
+
+        let model = AppModel(defaults: defaults)
+        XCTAssertEqual(model.fileExplorerTreePaneWidth, 336)
+
+        model.fileExplorerTreePaneWidth = 248
+        XCTAssertEqual(defaults.double(forKey: "fileExplorer.treePaneWidth"), 248)
+    }
+
     func testSearchResultsIgnoreSelectedOrganization() {
         let defaults = UserDefaults(suiteName: #function)!
         defaults.removePersistentDomain(forName: #function)

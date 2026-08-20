@@ -109,6 +109,29 @@ struct GitHubWorkflowRunPage {
     let hasMore: Bool
 }
 
+struct WorkflowRunDetails: Equatable {
+    let jobs: [WorkflowRunJob]
+}
+
+struct WorkflowRunJob: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let status: String
+    let conclusion: String?
+    let startedAt: Date?
+    let completedAt: Date?
+    let steps: [WorkflowRunStep]
+}
+
+struct WorkflowRunStep: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let status: String
+    let conclusion: String?
+    let startedAt: Date?
+    let completedAt: Date?
+}
+
 struct CommitConnection: Hashable {
     let fromLane: Int
     let toLane: Int

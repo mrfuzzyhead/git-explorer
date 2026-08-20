@@ -23,6 +23,11 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var repositoryFilter: RepositoryFilter = .all
+    @Published var fileExplorerTreePaneWidth: CGFloat {
+        didSet {
+            defaults.set(Double(fileExplorerTreePaneWidth), forKey: Self.fileExplorerTreePaneWidthDefaultsKey)
+        }
+    }
     @Published var selectedRepositoryID: Repository.ID? {
         didSet {
             defaults.set(selectedRepositoryID, forKey: Self.selectedRepositoryDefaultsKey)
@@ -51,6 +56,8 @@ final class AppModel: ObservableObject {
     private static let repositoryCacheDefaultsKey = "repositoryCache.v1"
     private static let selectedRepositoryDefaultsKey = "selectedRepositoryID"
     private static let selectedOrganizationDefaultsKey = "selectedOrganization"
+    private static let fileExplorerTreePaneWidthDefaultsKey = "fileExplorer.treePaneWidth"
+    private static let defaultFileExplorerTreePaneWidth: CGFloat = 280
     private static let accountMigrationDefaultsKey = "sourceControlAccounts.didMigrateLegacyGitHub.v1"
     private static let initialRefreshDelay = Duration.milliseconds(750)
 
@@ -62,6 +69,11 @@ final class AppModel: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        if defaults.object(forKey: Self.fileExplorerTreePaneWidthDefaultsKey) == nil {
+            fileExplorerTreePaneWidth = Self.defaultFileExplorerTreePaneWidth
+        } else {
+            fileExplorerTreePaneWidth = CGFloat(defaults.double(forKey: Self.fileExplorerTreePaneWidthDefaultsKey))
+        }
         accounts = SourceControlAccountStore.load(defaults: defaults)
         migrateLegacyGitHubAccountIfNeeded()
         restoreRepositoryCache()
@@ -348,6 +360,48 @@ final class AppModel: ObservableObject {
                 limit: limit,
                 token: token
             )
+        }
+    }
+
+    func remoteWorkflowRunDetails(
+        for repository: Repository,
+        runID: Int64
+    ) async throws -> WorkflowRunDetails {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else {
+                throw AzureDevOpsError.invalidOrganization
+            }
+            return try await azureDevOps.pipelineRunDetails(
+                repository: repository,
+                runID: runID,
+                organization: organization,
+                token: token
+            )
+        case .github, .none:
+            return try await github.workflowRunDetails(
+                fullName: repository.fullName,
+                runID: runID,
+                token: token
+            )
+        }
+    }
+
+    func remoteBranches(for repository: Repository) async throws -> [String] {
+        let token = token(for: repository)
+        switch repository.provider {
+        case .azureDevOps:
+            guard let organization = account(for: repository)?.organization else {
+                throw AzureDevOpsError.invalidOrganization
+            }
+            return try await azureDevOps.branches(
+                repository: repository,
+                organization: organization,
+                token: token
+            )
+        case .github, .none:
+            return try await github.branches(fullName: repository.fullName, token: token)
         }
     }
 

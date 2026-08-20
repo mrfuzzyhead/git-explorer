@@ -2,6 +2,60 @@ import XCTest
 @testable import GitExplorer
 
 final class GitServiceTests: XCTestCase {
+    func testGitHubWorkflowRunDetailsMapsJobsAndSteps() async throws {
+        let data = Data(#"""
+        {
+          "jobs": [{
+            "id": 99,
+            "name": "build",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-08-20T00:00:00Z",
+            "completed_at": "2026-08-20T00:01:00Z",
+            "steps": [{
+              "number": 1,
+              "name": "Compile",
+              "status": "completed",
+              "conclusion": "success",
+              "started_at": "2026-08-20T00:00:05Z",
+              "completed_at": "2026-08-20T00:00:50Z"
+            }]
+          }]
+        }
+        """#.utf8)
+
+        let details = try await GitHubService().workflowRunDetails(from: data)
+
+        XCTAssertEqual(details.jobs.first?.name, "build")
+        XCTAssertEqual(details.jobs.first?.steps.first?.name, "Compile")
+        XCTAssertEqual(details.jobs.first?.steps.first?.conclusion, "success")
+    }
+
+    func testAzurePipelineRunDetailsGroupsTimelineTasksUnderJobs() async throws {
+        let data = Data(#"""
+        {
+          "records": [
+            {
+              "id": "step-1", "parentId": "job-1", "type": "Task", "name": "Tests",
+              "state": "completed", "result": "failed", "order": 2,
+              "startTime": "2026-08-20T00:01:00.000Z", "finishTime": "2026-08-20T00:02:00.000Z"
+            },
+            {
+              "id": "job-1", "parentId": null, "type": "Job", "name": "macOS",
+              "state": "completed", "result": "failed", "order": 1,
+              "startTime": "2026-08-20T00:00:00.000Z", "finishTime": "2026-08-20T00:02:00.000Z"
+            }
+          ]
+        }
+        """#.utf8)
+
+        let details = try await AzureDevOpsService().pipelineRunDetails(from: data)
+
+        XCTAssertEqual(details.jobs.first?.name, "macOS")
+        XCTAssertEqual(details.jobs.first?.steps.first?.name, "Tests")
+        XCTAssertEqual(details.jobs.first?.steps.first?.conclusion, "failed")
+    }
+
     func testWorkflowRunPageMapsActionsSummaryAndPagination() async throws {
         let data = Data(#"""
         {
