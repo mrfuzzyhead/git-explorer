@@ -185,6 +185,11 @@ private struct ExplorerSplitView<Tree: View, Preview: View>: View {
     }
 }
 
+private enum ExplorerChrome {
+    static let folderBackground = Color.accentColor.opacity(0.08)
+    static let branchPillFill = Color.primary.opacity(0.12)
+}
+
 private struct ExplorerBranchBar: View {
     let branch: String
     let branches: [String]
@@ -211,6 +216,9 @@ private struct ExplorerBranchBar: View {
                         }
                     } label: {
                         HStack(spacing: 8) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18)
                             Text(branch.isEmpty ? "Loading branches…" : branch)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -221,7 +229,7 @@ private struct ExplorerBranchBar: View {
                         }
                         .padding(.horizontal, 12)
                         .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
-                        .background(Color.secondary.opacity(0.16), in: Capsule())
+                        .background(ExplorerChrome.branchPillFill, in: Capsule())
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -231,7 +239,7 @@ private struct ExplorerBranchBar: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(.bar)
+            .background(ExplorerChrome.folderBackground)
             .accessibilityLabel("File explorer branch")
     }
 }
@@ -247,7 +255,7 @@ private struct ExplorerTreePane: View {
 
     var body: some View {
         ZStack {
-            Color.accentColor.opacity(0.08)
+            ExplorerChrome.folderBackground
 
             ScrollViewReader { proxy in
                 List {
@@ -705,7 +713,10 @@ private struct RemoteFileExplorerWorkspace: View {
                     )
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(.clear)
             }
+            .background(ExplorerChrome.folderBackground)
         } preview: {
             remotePreview
         }

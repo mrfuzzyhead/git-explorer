@@ -890,6 +890,7 @@ private struct WorkflowRunDetailsView: View {
                                         completedAt: step.completedAt,
                                         isStep: true
                                     )
+                                    .listRowSeparator(.hidden)
                                 }
                             } label: {
                                 WorkflowRunDetailRow(
@@ -901,6 +902,7 @@ private struct WorkflowRunDetailsView: View {
                                     isStep: false
                                 )
                             }
+                            .listRowSeparator(.hidden)
                         }
                         .listStyle(.inset)
                     }
