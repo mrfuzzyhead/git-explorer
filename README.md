@@ -259,9 +259,9 @@ project.yml
 - Repository cloning uses the repository name under the selected root. If that
   destination already exists, Git reports the conflict and no files are
   overwritten.
-- README rendering uses SwiftUI's native Markdown support; advanced GitHub
-  Markdown extensions and repository-relative images may render differently
-  from github.com.
+- README rendering supports common GitHub-style blocks, repository-relative
+  images, and basic Mermaid flowcharts. More advanced Markdown, HTML, and
+  Mermaid syntax may still render differently from github.com.
 
 ## License
 

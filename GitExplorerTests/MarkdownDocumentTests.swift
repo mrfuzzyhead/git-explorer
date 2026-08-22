@@ -58,4 +58,74 @@ final class MarkdownDocumentTests: XCTestCase {
 
         XCTAssertEqual(document.blocks, [.code(language: nil, contents: "one\ntwo")])
     }
+
+    func testIndentedFenceRemovesMarkdownIndentFromLanguageAndContents() {
+        let document = MarkdownDocument(markdown: """
+        1. Configure the app:
+
+           ```dotenv
+           APP_ORIGIN=http://localhost:3000
+           DATABASE_URL=postgresql://localhost/app
+           ```
+        """)
+
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .list([.init(text: "Configure the app:", number: 1)]),
+                .code(
+                    language: "dotenv",
+                    contents: "APP_ORIGIN=http://localhost:3000\nDATABASE_URL=postgresql://localhost/app"
+                )
+            ]
+        )
+    }
+
+    func testParsesCenteredHTMLImageBlock() {
+        let document = MarkdownDocument(markdown: """
+        <p align="center">
+          <img src="frontend/public/favicon.svg" alt="Transfer logo" width="88" height="88">
+        </p>
+
+        # Transfer
+        """)
+
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .image(.init(
+                    source: "frontend/public/favicon.svg",
+                    alt: "Transfer logo",
+                    width: 88,
+                    height: 88,
+                    alignment: .center
+                )),
+                .heading(level: 1, text: "Transfer")
+            ]
+        )
+    }
+
+    func testParsesMermaidFlowchartAsDiagram() throws {
+        let document = MarkdownDocument(markdown: """
+        ```mermaid
+        flowchart LR
+            Browser[Browser] -->|HTTPS| Edge[Reverse proxy]
+            Edge --> Frontend[Frontend nginx + React]
+            Frontend <-->|/socket.io| API[Express API]
+            API -->|metadata| PostgreSQL[(PostgreSQL)]
+        ```
+        """)
+
+        guard case let .mermaid(diagram) = try XCTUnwrap(document.blocks.first) else {
+            return XCTFail("Expected a Mermaid diagram block")
+        }
+        XCTAssertEqual(diagram.direction, .leftToRight)
+        XCTAssertEqual(diagram.nodes.map(\.label), [
+            "Browser", "Reverse proxy", "Frontend nginx + React", "Express API", "PostgreSQL"
+        ])
+        XCTAssertEqual(diagram.edges.count, 4)
+        XCTAssertEqual(diagram.edges[0].label, "HTTPS")
+        XCTAssertTrue(diagram.edges[2].bidirectional)
+        XCTAssertEqual(diagram.nodes.last?.shape, .database)
+    }
 }
