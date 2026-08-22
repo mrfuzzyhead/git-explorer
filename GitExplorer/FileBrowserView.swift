@@ -454,11 +454,183 @@ private struct FileItemIcon: View {
     }
 }
 
+enum FilePreviewPolicy {
+    static let largeFileByteThreshold = 256 * 1_024
+    static let largeFileLineThreshold = 5_000
+    static let previewByteLimit = 100 * 1_024
+    static let previewLineLimit = 2_000
+
+    static func lineCount(in contents: String) -> Int {
+        guard !contents.isEmpty else { return 0 }
+        let newlineCount = contents.utf8.reduce(into: 0) { count, byte in
+            if byte == 0x0A { count += 1 }
+        }
+        return newlineCount + (contents.utf8.last == 0x0A ? 0 : 1)
+    }
+
+    static func limitedPreview(of contents: String) -> String {
+        let lineLimited = contents
+            .split(separator: "\n", maxSplits: previewLineLimit, omittingEmptySubsequences: false)
+            .prefix(previewLineLimit)
+            .joined(separator: "\n")
+        var data = Data(lineLimited.utf8.prefix(previewByteLimit))
+        while !data.isEmpty, String(data: data, encoding: .utf8) == nil {
+            data.removeLast()
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
+struct FilePreviewMetadata: Sendable, Equatable {
+    let byteCount: Int64
+
+    var formattedByteCount: String {
+        ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
+    }
+}
+
+struct FilePreviewReadResult: Sendable, Equatable {
+    let contents: String
+    let metadata: FilePreviewMetadata
+    let totalLineCount: Int
+    let displayedLineCount: Int
+    let isTruncated: Bool
+
+    var shouldHighlight: Bool {
+        supportsRichPreview
+    }
+
+    var supportsRichPreview: Bool {
+        !isTruncated
+            && metadata.byteCount <= FilePreviewPolicy.largeFileByteThreshold
+            && totalLineCount <= FilePreviewPolicy.largeFileLineThreshold
+    }
+}
+
+private struct PreparedTextPreview: Sendable {
+    let id = UUID()
+    let readResult: FilePreviewReadResult
+    let tokens: [SourceToken]?
+}
+
+private enum FilePreviewLoadMode: Hashable, Sendable {
+    case automatic
+    case full
+}
+
+private enum FilePreviewPhase {
+    case reading(FilePreviewMetadata?)
+    case preparing(FilePreviewMetadata)
+    case loaded(PreparedTextPreview)
+    case failed(String)
+}
+
+enum FilePreviewLoader {
+    static func metadata(for url: URL) async throws -> FilePreviewMetadata {
+        try await detached {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            return FilePreviewMetadata(byteCount: Int64(values.fileSize ?? 0))
+        }
+    }
+
+    static func read(
+        url: URL,
+        metadata: FilePreviewMetadata,
+        loadFullFile: Bool
+    ) async throws -> FilePreviewReadResult {
+        try await detached {
+            if !loadFullFile, metadata.byteCount > FilePreviewPolicy.largeFileByteThreshold {
+                return try readLargePreview(url: url, metadata: metadata)
+            }
+
+            try Task.checkCancellation()
+            let contents = try String(contentsOf: url, encoding: .utf8)
+            try Task.checkCancellation()
+            let totalLineCount = FilePreviewPolicy.lineCount(in: contents)
+            let shouldLimit = !loadFullFile && totalLineCount > FilePreviewPolicy.largeFileLineThreshold
+            let displayedContents = shouldLimit ? FilePreviewPolicy.limitedPreview(of: contents) : contents
+            return FilePreviewReadResult(
+                contents: displayedContents,
+                metadata: metadata,
+                totalLineCount: totalLineCount,
+                displayedLineCount: FilePreviewPolicy.lineCount(in: displayedContents),
+                isTruncated: shouldLimit
+            )
+        }
+    }
+
+    static func tokens(for contents: String, language: SourceLanguage) async throws -> [SourceToken] {
+        try await detached {
+            try Task.checkCancellation()
+            let tokens = SourceSyntaxHighlighter.tokens(in: contents, as: language)
+            try Task.checkCancellation()
+            return tokens
+        }
+    }
+
+    private static func readLargePreview(
+        url: URL,
+        metadata: FilePreviewMetadata
+    ) throws -> FilePreviewReadResult {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var prefix = Data()
+        prefix.reserveCapacity(FilePreviewPolicy.previewByteLimit)
+        var newlineCount = 0
+        var finalByte: UInt8?
+
+        while let chunk = try handle.read(upToCount: 64 * 1_024), !chunk.isEmpty {
+            try Task.checkCancellation()
+            newlineCount += chunk.reduce(into: 0) { count, byte in
+                if byte == 0x0A { count += 1 }
+            }
+            finalByte = chunk.last
+
+            let remaining = FilePreviewPolicy.previewByteLimit - prefix.count
+            if remaining > 0 {
+                prefix.append(chunk.prefix(remaining))
+            }
+        }
+
+        while !prefix.isEmpty, String(data: prefix, encoding: .utf8) == nil {
+            prefix.removeLast()
+        }
+        guard let prefixContents = String(data: prefix, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+
+        let contents = FilePreviewPolicy.limitedPreview(of: prefixContents)
+        let totalLineCount = metadata.byteCount == 0
+            ? 0
+            : newlineCount + (finalByte == 0x0A ? 0 : 1)
+        return FilePreviewReadResult(
+            contents: contents,
+            metadata: metadata,
+            totalLineCount: totalLineCount,
+            displayedLineCount: FilePreviewPolicy.lineCount(in: contents),
+            isTruncated: Int64(contents.utf8.count) < metadata.byteCount
+                || totalLineCount > FilePreviewPolicy.previewLineLimit
+        )
+    }
+
+    private static func detached<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let task = Task.detached(priority: .userInitiated, operation: operation)
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+}
+
 private struct FilePreview: View {
     let url: URL
     let root: URL
-    @State private var contents: String?
-    @State private var readError: String?
+    @State private var phase: FilePreviewPhase = .reading(nil)
+    @State private var loadMode: FilePreviewLoadMode = .automatic
 
     var body: some View {
         VStack(spacing: 0) {
@@ -476,19 +648,7 @@ private struct FilePreview: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
-                if ExplorerFileType.isImage(url) {
-                    Text("Image")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                } else if let language = SourceLanguage(url: url) {
-                    Text(language.displayName)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                } else if MarkdownDocument.isMarkdownFile(url) {
-                    Text("Markdown")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
+                headerStatus
             }
             .padding(.horizontal, 14)
             .frame(height: 48)
@@ -497,37 +657,141 @@ private struct FilePreview: View {
 
             if ExplorerFileType.isImage(url) {
                 LocalImagePreview(url: url)
-            } else if let contents {
-                preview(contents)
-            } else if let readError {
-                FilePreviewFeedback(message: readError)
             } else {
-                PaneLoadingView("Loading preview…")
+                previewBody
             }
         }
-        .task {
+        .task(id: loadMode) {
             guard !ExplorerFileType.isImage(url) else { return }
-            do {
-                contents = try await Task.detached(priority: .userInitiated) {
-                    try String(contentsOf: url, encoding: .utf8)
-                }.value
-            } catch {
-                readError = "This file isn’t UTF-8 text, or it can’t be read."
-            }
+            await loadPreview()
         }
     }
 
     @ViewBuilder
-    private func preview(_ contents: String) -> some View {
-        if MarkdownDocument.isMarkdownFile(url) {
-            MarkdownPreviewView(
-                markdown: contents,
-                baseURL: url.deletingLastPathComponent(),
-                maximumContentWidth: nil
-            )
+    private var headerStatus: some View {
+        if ExplorerFileType.isImage(url) {
+            fileTypeLabel("Image")
         } else {
-            TextFilePreview(contents: contents, url: url)
+            switch phase {
+            case .reading(let metadata):
+                fileTypeLabel(metadata?.formattedByteCount ?? "Reading…")
+            case .preparing(let metadata):
+                fileTypeLabel("Preparing • \(metadata.formattedByteCount)")
+            case .loaded(let preview):
+                fileTypeLabel("\(preview.readResult.totalLineCount.formatted()) lines • \(preview.readResult.metadata.formattedByteCount)")
+            case .failed:
+                fileTypeLabel(SourceLanguage(url: url)?.displayName ?? "Text")
+            }
         }
+    }
+
+    private func fileTypeLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var previewBody: some View {
+        switch phase {
+        case .reading(let metadata):
+            PaneLoadingView(
+                metadata.map { "Reading \(url.lastPathComponent) • \($0.formattedByteCount)" }
+                    ?? "Reading \(url.lastPathComponent)…"
+            )
+        case .preparing:
+            PaneLoadingView("Preparing preview…")
+        case .failed(let message):
+            FilePreviewFeedback(message: message)
+        case .loaded(let prepared):
+            let result = prepared.readResult
+            VStack(spacing: 0) {
+                if result.isTruncated {
+                    LargeFilePreviewBanner(
+                        displayedLineCount: result.displayedLineCount,
+                        totalLineCount: result.totalLineCount,
+                        byteCount: result.metadata.formattedByteCount,
+                        onLoadFullFile: { loadMode = .full },
+                        onOpenExternally: { NSWorkspace.shared.open(url) }
+                    )
+                    Divider()
+                }
+
+                if MarkdownDocument.isMarkdownFile(url), result.supportsRichPreview {
+                    MarkdownPreviewView(
+                        markdown: result.contents,
+                        baseURL: url.deletingLastPathComponent(),
+                        maximumContentWidth: nil
+                    )
+                } else {
+                    TextFilePreview(
+                        id: prepared.id,
+                        contents: result.contents,
+                        tokens: prepared.tokens
+                    )
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func loadPreview() async {
+        phase = .reading(nil)
+        do {
+            let metadata = try await FilePreviewLoader.metadata(for: url)
+            try Task.checkCancellation()
+            phase = .reading(metadata)
+
+            let readResult = try await FilePreviewLoader.read(
+                url: url,
+                metadata: metadata,
+                loadFullFile: loadMode == .full
+            )
+            try Task.checkCancellation()
+            phase = .preparing(metadata)
+
+            let tokens: [SourceToken]?
+            if readResult.shouldHighlight, let language = SourceLanguage(url: url) {
+                tokens = try await FilePreviewLoader.tokens(for: readResult.contents, language: language)
+            } else {
+                tokens = nil
+                await Task.yield()
+            }
+            try Task.checkCancellation()
+            phase = .loaded(PreparedTextPreview(readResult: readResult, tokens: tokens))
+        } catch is CancellationError {
+            return
+        } catch {
+            phase = .failed("This file isn’t UTF-8 text, or it can’t be read.")
+        }
+    }
+}
+
+private struct LargeFilePreviewBanner: View {
+    let displayedLineCount: Int
+    let totalLineCount: Int
+    let byteCount: String
+    let onLoadFullFile: () -> Void
+    let onOpenExternally: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .foregroundStyle(.secondary)
+            Text("Showing the first \(displayedLineCount.formatted()) of \(totalLineCount.formatted()) lines (\(byteCount)).")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 12)
+            Button("Open in Default App", action: onOpenExternally)
+            Button("Load Full File", action: onLoadFullFile)
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.accentColor.opacity(0.06))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -604,34 +868,93 @@ private struct FilePreviewFeedback: View {
     }
 }
 
-private struct TextFilePreview: View {
+private struct TextFilePreview: NSViewRepresentable {
+    let id: UUID
     let contents: String
-    let url: URL
+    let tokens: [SourceToken]?
 
-    var body: some View {
-        GeometryReader { geometry in
-            ScrollView([.vertical, .horizontal]) {
-                Group {
-                    if let language = SourceLanguage(url: url) {
-                        Text(SourceSyntaxHighlighter.highlight(contents, as: language))
-                    } else {
-                        Text(contents)
-                    }
-                }
-                .font(.system(.callout, design: .monospaced))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(16)
-                .frame(
-                    minWidth: geometry.size.width,
-                    minHeight: geometry.size.height,
-                    alignment: .topLeading
-                )
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 16, height: 16)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = true
+        textView.minSize = .zero
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.layoutManager?.allowsNonContiguousLayout = true
+        textView.setAccessibilityLabel("File preview")
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard context.coordinator.renderedID != id,
+              let textView = scrollView.documentView as? NSTextView else { return }
+
+        context.coordinator.renderedID = id
+        textView.textStorage?.setAttributedString(attributedContents)
+        textView.scrollToBeginningOfDocument(nil)
+    }
+
+    private var attributedContents: NSAttributedString {
+        let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 3
+        let baseAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        guard let tokens else {
+            return NSAttributedString(string: contents, attributes: baseAttributes)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+        let result = NSMutableAttributedString()
+        for token in tokens {
+            var attributes = baseAttributes
+            if let color = color(for: token.kind) {
+                attributes[.foregroundColor] = color
+            }
+            result.append(NSAttributedString(string: token.text, attributes: attributes))
+        }
+        return result
+    }
+
+    private func color(for kind: SourceToken.Kind) -> NSColor? {
+        switch kind {
+        case .plain: nil
+        case .keyword: .systemPurple
+        case .string: .systemRed
+        case .comment: .secondaryLabelColor
+        case .number: .systemBlue
+        }
+    }
+
+    final class Coordinator {
+        var renderedID: UUID?
     }
 }
 
@@ -923,6 +1246,8 @@ private struct RemoteFilePreview: View {
     let entry: RemoteFileEntry
     let reference: String
     @State private var contents: String?
+    @State private var sourceTokens: [SourceToken]?
+    @State private var textPreviewID = UUID()
     @State private var imageData: Data?
     @State private var errorMessage: String?
 
@@ -957,7 +1282,11 @@ private struct RemoteFilePreview: View {
                         maximumContentWidth: nil
                     )
                 } else {
-                    TextFilePreview(contents: contents, url: syntheticURL)
+                    TextFilePreview(
+                        id: textPreviewID,
+                        contents: contents,
+                        tokens: sourceTokens
+                    )
                 }
             } else if let errorMessage {
                 FilePreviewFeedback(
@@ -984,12 +1313,25 @@ private struct RemoteFilePreview: View {
                     }
                     imageData = data
                 } else {
-                    contents = try await model.remoteFileContents(
+                    let downloadedContents = try await model.remoteFileContents(
                         for: repository,
                         path: entry.path,
                         reference: reference
                     )
+                    if !MarkdownDocument.isMarkdownFile(syntheticURL),
+                       downloadedContents.utf8.count <= FilePreviewPolicy.largeFileByteThreshold,
+                       FilePreviewPolicy.lineCount(in: downloadedContents) <= FilePreviewPolicy.largeFileLineThreshold,
+                       let language = SourceLanguage(url: syntheticURL) {
+                        sourceTokens = try await FilePreviewLoader.tokens(
+                            for: downloadedContents,
+                            language: language
+                        )
+                    }
+                    try Task.checkCancellation()
+                    contents = downloadedContents
                 }
+            } catch is CancellationError {
+                return
             } catch {
                 errorMessage = ExplorerFileType.isImage(syntheticURL)
                     ? "This image can’t be downloaded."

@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum SourceLanguage: String, CaseIterable, Equatable {
+enum SourceLanguage: String, CaseIterable, Equatable, Sendable {
     case swift
     case objectiveC
     case cFamily
@@ -136,8 +136,8 @@ enum SourceLanguage: String, CaseIterable, Equatable {
     }
 }
 
-struct SourceToken: Equatable {
-    enum Kind: Equatable {
+struct SourceToken: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
         case plain
         case keyword
         case string

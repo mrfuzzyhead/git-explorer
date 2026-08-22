@@ -45,6 +45,57 @@ final class FileExplorerTests: XCTestCase {
         XCTAssertTrue(tokens.contains(.init(kind: .comment, text: #"// "not a string""#)))
         XCTAssertEqual(tokens.map(\.text).joined(), source)
     }
+
+    func testLargeFilePreviewLimitsLinesAndPreservesUTF8() {
+        let source = (0..<FilePreviewPolicy.previewLineLimit + 10)
+            .map { "\($0): café" }
+            .joined(separator: "\n")
+
+        let preview = FilePreviewPolicy.limitedPreview(of: source)
+
+        XCTAssertEqual(FilePreviewPolicy.lineCount(in: preview), FilePreviewPolicy.previewLineLimit)
+        XCTAssertLessThanOrEqual(preview.utf8.count, FilePreviewPolicy.previewByteLimit)
+        XCTAssertTrue(preview.hasSuffix("1999: café"))
+    }
+
+    func testLineCountHandlesEmptyTrailingAndUnterminatedLines() {
+        XCTAssertEqual(FilePreviewPolicy.lineCount(in: ""), 0)
+        XCTAssertEqual(FilePreviewPolicy.lineCount(in: "one\ntwo"), 2)
+        XCTAssertEqual(FilePreviewPolicy.lineCount(in: "one\ntwo\n"), 2)
+    }
+
+    func testLargeFileLoaderReturnsBoundedPreviewAndFullFileOnRequest() async throws {
+        let line = #"    "dependency": { "version": "1.0.0" }"#
+        let source = Array(repeating: line, count: 8_204).joined(separator: "\n") + "\n"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("file-preview-\(UUID().uuidString).json")
+        try source.write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let metadata = FilePreviewMetadata(byteCount: Int64(source.utf8.count))
+        let automatic = try await FilePreviewLoader.read(
+            url: url,
+            metadata: metadata,
+            loadFullFile: false
+        )
+
+        XCTAssertTrue(automatic.isTruncated)
+        XCTAssertEqual(automatic.totalLineCount, 8_204)
+        XCTAssertLessThanOrEqual(automatic.displayedLineCount, FilePreviewPolicy.previewLineLimit)
+        XCTAssertLessThanOrEqual(automatic.contents.utf8.count, FilePreviewPolicy.previewByteLimit)
+        XCTAssertFalse(automatic.shouldHighlight)
+
+        let full = try await FilePreviewLoader.read(
+            url: url,
+            metadata: metadata,
+            loadFullFile: true
+        )
+
+        XCTAssertFalse(full.isTruncated)
+        XCTAssertEqual(full.contents, source)
+        XCTAssertEqual(full.totalLineCount, 8_204)
+        XCTAssertFalse(full.shouldHighlight)
+    }
 }
 
 @MainActor
