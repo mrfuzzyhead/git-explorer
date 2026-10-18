@@ -20,6 +20,10 @@ struct CommitGraphView: View {
     @State private var selectedBranch: String?
     @State private var selectedCommitID: String?
     @State private var recentBranches: [String] = []
+    @State private var cherryPickCommit: GitCommit?
+    @State private var cherryPickBranch = ""
+    @State private var cherryPickPresented = false
+    @State private var cherryPicking = false
     @State private var renamePresented = false
     @State private var createBranchPresented = false
     @State private var renamedBranch = ""
@@ -72,6 +76,12 @@ struct CommitGraphView: View {
         .onChange(of: columnWidths) { _, newWidths in
             newWidths.save()
         }
+        .alert("Cherry-Pick Commit", isPresented: $cherryPickPresented) {
+            Button("Cancel", role: .cancel) {}
+            Button("Cherry-Pick") { performCherryPick() }
+        } message: {
+            Text("Apply \(cherryPickCommit?.abbreviatedID ?? "") (\(cherryPickCommit?.message ?? "")) to \(cherryPickBranch)?")
+        }
         .alert("Rename Branch", isPresented: $renamePresented) {
             TextField("New branch name", text: $renamedBranch)
             Button("Cancel", role: .cancel) {}
@@ -98,6 +108,13 @@ struct CommitGraphView: View {
             recentBranches: recentBranches,
             canManageBranches: repository.localURL != nil,
             onBranchAction: handleBranchMenuAction,
+            canCherryPick: repository.localURL != nil && repositoryStatus != nil &&
+                repositoryStatus?.branch != "Detached HEAD" && !hasPendingChanges && !cherryPicking,
+            onCherryPick: { commit in
+                cherryPickCommit = commit
+                cherryPickBranch = repositoryStatus?.branch ?? ""
+                cherryPickPresented = true
+            },
             loadedCommitCount: commits.count,
             hasMoreCommits: hasMoreCommits,
             loadingMore: loadingMore,
@@ -371,6 +388,36 @@ struct CommitGraphView: View {
             result[index].children = children[result[index].id] ?? []
         }
         return result
+    }
+
+    private var hasPendingChanges: Bool { repositoryStatus?.hasChanges == true }
+
+    private func performCherryPick() {
+        guard let commit = cherryPickCommit, let url = repository.localURL, !cherryPicking else { return }
+        let branch = cherryPickBranch
+        cherryPicking = true
+        Task {
+            defer { cherryPicking = false }
+            let toastID = model.showToast(
+                title: "Cherry-picking \(commit.abbreviatedID)…",
+                style: .information, showsActivity: true, isDismissible: false
+            )
+            do {
+                try await model.git.cherryPick(commit: commit.id, into: branch, at: url)
+                await reload(showsRefreshToast: false)
+                model.updateToast(
+                    toastID, title: "Cherry-pick complete", message: branch,
+                    style: .success, showsActivity: false, isDismissible: true
+                )
+            } catch {
+                await reload(showsRefreshToast: false, reportsErrors: false)
+                model.updateToast(
+                    toastID, title: "Cherry-pick failed",
+                    message: error.localizedDescription,
+                    style: .error, showsActivity: false, isDismissible: true
+                )
+            }
+        }
     }
 
     private func handleBranchMenuAction(_ action: BranchMenuAction) {

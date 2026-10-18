@@ -12,6 +12,8 @@ struct CommitGraphList: View {
     let recentBranches: [String]
     let canManageBranches: Bool
     let onBranchAction: (BranchMenuAction) -> Void
+    let canCherryPick: Bool
+    let onCherryPick: (GitCommit) -> Void
     let loadedCommitCount: Int
     let hasMoreCommits: Bool
     let loadingMore: Bool
@@ -127,6 +129,15 @@ struct CommitGraphList: View {
                     updateHover(for: layout.id, surface: .metadata, phase: phase)
                 }
                 .onTapGesture { selectedCommit = layout.commit }
+                .contextMenu {
+                    Button("Cherry-Pick into Checked Out Branch…") {
+                        onCherryPick(layout.commit)
+                    }
+                    .disabled(!canCherryPick || layout.commit.parents.count > 1)
+                    if layout.commit.parents.count > 1 {
+                        Text("Cherry-picking merge commits is not supported")
+                    }
+                }
             }
 
             loadMoreRow

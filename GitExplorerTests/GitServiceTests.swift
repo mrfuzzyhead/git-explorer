@@ -470,6 +470,16 @@ final class GitServiceTests: XCTestCase {
         XCTAssertTrue(details.changedFiles.contains { $0.contains("feature.txt") })
         XCTAssertTrue(details.diff.contains("feature"))
 
+        let mergeDetails = try await service.details(for: head, at: repository)
+        XCTAssertEqual(mergeDetails.changedFiles, ["A\tfeature.txt"])
+        XCTAssertTrue(mergeDetails.fileDiffs["A\tfeature.txt"]?.contains("+feature") == true)
+        XCTAssertFalse(mergeDetails.diff.contains("+main"))
+
+        let root = try XCTUnwrap(commits.first { $0.parents.isEmpty })
+        let rootDetails = try await service.details(for: root, at: repository)
+        XCTAssertEqual(rootDetails.changedFiles, ["A\tbase.txt"])
+        XCTAssertTrue(rootDetails.diff.contains("+base"))
+
         try write("dirty\n", to: repository.appendingPathComponent("uncommitted.txt"))
         let status = try await service.status(at: repository)
         XCTAssertEqual(status.branch, "main")
@@ -726,9 +736,13 @@ final class GitServiceTests: XCTestCase {
             "main"
         )
         XCTAssertEqual(
-            try git(["rev-parse", "main"], at: repository),
+            try git(["rev-parse", "main^2"], at: repository),
             try git(["rev-parse", "feature"], at: repository)
         )
+        let mergeMessage = try git(["log", "-1", "--format=%B"], at: repository)
+        XCTAssertTrue(mergeMessage.hasPrefix("Merge branch 'feature' into 'main'\n\nMerged commits:\n"))
+        XCTAssertTrue(mergeMessage.contains(" Feature"))
+        XCTAssertFalse(mergeMessage.contains(" Base"))
     }
 
     func testSwitchingToRemoteBranchCreatesAndReusesLocalTrackingBranch() async throws {
@@ -819,6 +833,45 @@ final class GitServiceTests: XCTestCase {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             "conflict.txt"
         )
+    }
+
+    func testCherryPickAppliesToCheckedOutBranchAndAbortsConflicts() async throws {
+        let repository = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repository) }
+        try git(["init", "-b", "main"], at: repository)
+        try git(["config", "user.name", "Tests"], at: repository)
+        try git(["config", "user.email", "tests@example.invalid"], at: repository)
+        let file = repository.appendingPathComponent("file.txt")
+        try write("base\n", to: file)
+        try git(["add", "."], at: repository)
+        try git(["commit", "-m", "Base"], at: repository)
+        try git(["checkout", "-b", "feature"], at: repository)
+        try write("feature\n", to: file)
+        try git(["commit", "-am", "Feature"], at: repository)
+        let commit = try git(["rev-parse", "HEAD"], at: repository).trimmingCharacters(in: .whitespacesAndNewlines)
+        try git(["checkout", "main"], at: repository)
+        let service = GitService()
+        do {
+            try await service.cherryPick(commit: commit, into: "other", at: repository)
+            XCTFail("Expected branch mismatch to fail")
+        } catch {}
+        try await service.cherryPick(commit: commit, into: "main", at: repository)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "feature\n")
+        XCTAssertEqual(try git(["branch", "--show-current"], at: repository).trimmingCharacters(in: .whitespacesAndNewlines), "main")
+        try git(["reset", "--hard", "HEAD~1"], at: repository)
+        try write("main\n", to: file)
+        try git(["commit", "-am", "Main"], at: repository)
+        let head = try git(["rev-parse", "HEAD"], at: repository)
+        do {
+            try await service.cherryPick(commit: commit, into: "main", at: repository)
+            XCTFail("Expected conflict")
+        } catch {}
+        XCTAssertEqual(try git(["rev-parse", "HEAD"], at: repository), head)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "main\n")
+        let status = try await service.status(at: repository)
+        XCTAssertFalse(status.hasChanges)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: repository.appendingPathComponent(".git/CHERRY_PICK_HEAD").path))
     }
 
     private func write(_ contents: String, to url: URL) throws {

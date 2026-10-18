@@ -331,18 +331,21 @@ actor GitService {
     func details(for commit: GitCommit, at repository: URL) async throws -> CommitDetails {
         let executableURL = executableURL
         return try await Task.detached(priority: .userInitiated) {
+            // Compare merges with the destination branch before the merge.
+            // --root also includes the files introduced by an initial commit.
+            let revisions = commit.parents.first.map { [$0, commit.id] } ?? [commit.id]
             let files = try Self.run([
-                "-C", repository.path, "diff-tree", "--no-commit-id", "--name-status", "-r", commit.id
-            ], executableURL: executableURL).split(separator: "\n").map(String.init)
+                "-C", repository.path, "diff-tree", "--root", "--no-commit-id", "--name-status", "-r"
+            ] + revisions, executableURL: executableURL).split(separator: "\n").map(String.init)
             var fileDiffs: [String: String] = [:]
             for file in files {
                 guard let path = file.split(separator: "\t", omittingEmptySubsequences: false).last else {
                     continue
                 }
                 fileDiffs[file] = try Self.run([
-                    "-C", repository.path, "show", "--format=", "--patch", "--no-ext-diff",
-                    commit.id, "--", String(path)
-                ], executableURL: executableURL)
+                    "-C", repository.path, "diff-tree", "--root", "--no-commit-id",
+                    "-r", "--patch", "--no-ext-diff"
+                ] + revisions + ["--", String(path)], executableURL: executableURL)
             }
             return CommitDetails(commit: commit, changedFiles: files, fileDiffs: fileDiffs)
         }.value
@@ -657,9 +660,48 @@ actor GitService {
         _ = try run(["-C", repository.path, "branch", branch, commit])
     }
 
+    func cherryPick(commit: String, into expectedBranch: String, at repository: URL) throws {
+        let branch = try run(["-C", repository.path, "symbolic-ref", "--short", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard branch == expectedBranch else {
+            throw GitServiceError.failed(arguments: ["cherry-pick"], message: "The checked out branch changed. Try again.")
+        }
+        guard try !status(at: repository).hasChanges else {
+            throw GitServiceError.failed(arguments: ["cherry-pick"], message: "Commit or stash your changes before cherry-picking.")
+        }
+        for marker in ["CHERRY_PICK_HEAD", "MERGE_HEAD", "REVERT_HEAD", "sequencer", "rebase-merge", "rebase-apply"] {
+            let path = try run(["-C", repository.path, "rev-parse", "--git-path", marker])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : repository.appendingPathComponent(path)
+            guard !FileManager.default.fileExists(atPath: url.path) else {
+                throw GitServiceError.failed(arguments: ["cherry-pick"], message: "Finish or abort the current Git operation before cherry-picking.")
+            }
+        }
+        do {
+            _ = try run(["-C", repository.path, "cherry-pick", commit])
+        } catch {
+            // Restore the clean starting state if Git leaves a conflicted or empty pick in progress.
+            let cherryPickHead = try? run(["-C", repository.path, "rev-parse", "--verify", "CHERRY_PICK_HEAD"])
+            if cherryPickHead != nil {
+                do {
+                    _ = try run(["-C", repository.path, "cherry-pick", "--abort"])
+                } catch {
+                    throw GitServiceError.failed(arguments: ["cherry-pick", "--abort"], message: "Cherry-pick failed and could not be aborted: \(error.localizedDescription)")
+                }
+            }
+            throw error
+        }
+    }
+
     func merge(branch source: String, into target: String, at repository: URL) throws {
         _ = try run(["-C", repository.path, "checkout", target])
-        _ = try run(["-C", repository.path, "merge", source])
+        let commits = try run([
+            "-C", repository.path, "log", "--reverse", "--format=- %h %s",
+            "HEAD..\(source)"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = "Merge branch '\(source)' into '\(target)'"
+            + (commits.isEmpty ? "" : "\n\nMerged commits:\n\(commits)")
+        _ = try run(["-C", repository.path, "merge", "--no-ff", "-m", message, source])
     }
 
     func delete(branch: String, at repository: URL) throws {
